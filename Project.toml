@@ -1,0 +1,23 @@
+name = "MOSolvers"
+uuid = "b8c76f4e-5d2a-4c7b-8f8a-3a2d9e6c0e16"
+authors = ["Seu Nome <seu.email@exemplo.com>"]
+version = "0.1.0"
+
+[deps]
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+MOProblems = "a5b80fa4-7d73-4f2e-b7b1-8d4a9c5c7c4d"
+Parameters = "d96e819e-fc66-5662-9728-84c9c7592b0a"
+StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[compat]
+MOProblems = "0.1"
+Parameters = "0.12"
+StaticArrays = "1.0"
+julia = "1.6"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"] 
