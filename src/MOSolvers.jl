@@ -17,14 +17,14 @@ include("utils/linesearch.jl")
 
 # Incluir subproblemas
 include("subproblems/subproblem_condg.jl")
-# include("subproblems/subproblem_proxgrad.jl")
-# include("subproblems/subproblem_dfreemo.jl")
+include("subproblems/subproblem_proxgrad.jl")
+include("subproblems/subproblem_dfreemo.jl")
 
 # Incluir solvers
 include("solvers/condg.jl")
-# include("solvers/proxgrad.jl")
-# include("solvers/dfreemo.jl")
+include("solvers/proxgrad.jl")
+include("solvers/dfreemo.jl")
 
 # Exportar solvers
-export CondG, CondG_options
+export CondG, CondG_options, ProxGrad, ProxGrad_options, DFreeMO, DFreeMO_options
 end

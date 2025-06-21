@@ -64,8 +64,8 @@ function CondG(evalf::Function, evalJf::Function, A::Vector{<:AbstractMatrix{T}}
     end
 
     # Processamento dos limites
-    lb_vec = process_bounds(lb, n, -Inf)
-    ub_vec = process_bounds(ub, n, Inf)
+    lb_vec = process_bounds(lb, n, T(-Inf))
+    ub_vec = process_bounds(ub, n, T(Inf))
 
     # Verificar se lb <= ub
     for i in 1:n
@@ -83,7 +83,8 @@ function CondG(evalf::Function, evalJf::Function, A::Vector{<:AbstractMatrix{T}}
     SubProbParams = SubProblemParams(A2n, b2n, lb_vec, ub_vec)
 
     # Create result structure
-    result = OptimResult(x0)
+    Fval = zeros(T, m)
+    result = OptimResult(x0, Fval)
 
     function f!(f, x)
         result.n_f_evals += 1
@@ -105,7 +106,6 @@ function CondG(evalf::Function, evalJf::Function, A::Vector{<:AbstractMatrix{T}}
     """
 
     function h!(h, x)
-        #WARNING: The evaluation of function h! can be failed in line search subroutine 
         success, message = evalh!(h, x, SubProbParams)
         if !success
             result.success = false
@@ -130,6 +130,9 @@ function CondG(evalf::Function, evalJf::Function, A::Vector{<:AbstractMatrix{T}}
             if !success
                 result.success = false
                 result.message = "The subproblem of ProxGrad failed: " * message
+            elseif abs(theta) <= 1e-15
+                result.success = true
+                result.message = "The solution was found"
             end
             return theta, p
         elseif method == :dfreemo
@@ -137,6 +140,9 @@ function CondG(evalf::Function, evalJf::Function, A::Vector{<:AbstractMatrix{T}}
             if !success
                 result.success = false
                 result.message = "The subproblem of DFreeMO failed: " * message
+            elseif abs(theta) <= 1e-15
+                result.success = true
+                result.message = "The solution was found"
             end
             return theta, p
         else
@@ -169,34 +175,55 @@ function _CondG_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::
     JF = zeros(T, m, n)
     h = zeros(T, m)
 
-        # Define the composite objective function F(x) = f(x) + h(x)
+    # Define the composite objective function F(x) = f(x) + h(x)
     function F!(x; m::Int=m)
         Fx = zeros(T, m)
         h = zeros(T, m)
-        f!(Fx, x)
-        h!(h, x)
-        return Fx + h
+        
+        # Usar try-catch para capturar qualquer erro durante a avaliação
+        try
+            f!(Fx, x)
+            h!(h, x)
+            
+            # Verificar se h! falhou
+            if !result.success
+                # Em vez de lançar erro, retornar um código especial
+                # que será verificado em armijo
+                return nothing, result.message
+            end
+            
+            return Fx + h, nothing
+        catch e
+            # Capturar qualquer outro erro que possa ocorrer
+            result.success = false
+            result.message = "Error evaluating F!: " * string(e)
+            return nothing, result.message
+        end
     end
     
     if options.verbose > 0
         @info "----------------------------------------------------------------------"
         @info "Conditional Gradient Method for Composite Multiojective Optimization"
         @info "----------------------------------------------------------------------"
-        @info "Parameters: Number of variables=$(n), Number of objectives=$(m), Optimality tolerance=$(options.opt_tol), Max iterations=$(options.max_iter)"
+        @info "N of variables=$(n), N of objectives=$(m), Opt tol=$(options.opt_tol), Max iter=$(options.max_iter)"
     end
 
-    if options.verbose > 0
-        print_table(result)
-    end
+    # if options.verbose > 0
+    #     print_table(result)
+    # end
 
     for iter in 1:options.max_iter
         # Compute F and JF
         f!(Fx, x)
         Jf!(JF, x)
         h!(h, x)
+        
+        # Verificar se h! falhou
         if !result.success
             break
         end
+        
+        result.Fval .= Fx + h
 
         # Solve the subproblem
         start_subproblem_time = time()
@@ -206,11 +233,19 @@ function _CondG_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::
             break
         end
 
+        result.abs_theta = abs(theta)
+
+        if options.verbose > 0
+            print_table(result)
+        end
+
         # Define the search direction
         d = p - x
 
         # Compute the step size
-        line_search_result = armijo(F!, x, d, Fx + h, JF, factor=-abs(theta))
+        line_search_result = armijo(F!, x, d, result.Fval, JF, factor=-abs(theta))
+        
+        # Se a busca linear falhou devido a um erro em F!, a mensagem já foi atualizada
 
         if !line_search_result.success
             result.message = line_search_result.message
@@ -223,11 +258,7 @@ function _CondG_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::
         norm_progress = norm(x - result.x, Inf) / max(1, norm(result.x, Inf))
 
         # Update
-        update!(result, x=x, theta=theta, norm_progress=norm_progress, iter=iter, store_trace=options.store_trace)
-
-        if options.verbose > 0
-            print_table(result)
-        end
+        update!(result, x=x, norm_progress=norm_progress, iter=iter, store_trace=options.store_trace)
 
         # Stopping criteria
         # Test optimality

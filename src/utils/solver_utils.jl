@@ -12,32 +12,34 @@ Estrutura que armazena os resultados de um solver de otimização.
 """
 mutable struct OptimResult{T<:AbstractFloat}
     x::Vector{T}
+    Fval::Vector{T}
     iter::Int
-    theta::T
+    abs_theta::T
     norm_progress::T
     n_f_evals::Int
     n_Jf_evals::Int
     total_time::Float64
     subproblem_time::Float64
     x_trace::Vector{Vector{T}}
-    theta_trace::Vector{T}
+    abs_theta_trace::Vector{T}
     norm_progress_trace::Vector{T}
     success::Bool
     message::String
 end
 
-function OptimResult(x0::AbstractVector{T}) where {T<:AbstractFloat}
+function OptimResult(x0::AbstractVector{T}, Fval::AbstractVector{T}) where {T<:AbstractFloat}
     return OptimResult{T}(
         copy(x0),
+        copy(Fval),
         0,                        # iter
-        T(Inf),                   # theta
+        T(Inf),                   # abs_theta
         T(Inf),                   # norm_progress
         0,                        # n_f_evals
         0,                        # n_Jf_evals
         0,                        # total_time
         0,                        # subproblem_time
         Vector{Vector{T}}(),      # x_trace
-        T[],                      # theta_trace
+        T[],                      # abs_theta_trace
         T[],                      # norm_progress_trace
         true,                     # success
         "Optimization not started")  # message
@@ -52,9 +54,9 @@ function update!(result::OptimResult{T}; x=nothing, theta=nothing, norm_progress
     end
 
     if theta !== nothing
-        result.theta = theta
+        result.abs_theta = theta
         if store_trace
-            push!(result.theta_trace, theta)
+            push!(result.abs_theta_trace, theta)
         end
     end
 
@@ -132,11 +134,12 @@ function evalh!(h::AbstractVector{T}, x::AbstractVector{T}, SubProbParams::SubPr
 end
 
 # Função auxiliar para processar limites
-function process_bounds(bound, n::Integer, default_value)
+function process_bounds(bound, n::Int, default_value)
     if bound === nothing
         return fill(default_value, n)
     elseif isa(bound, Number)
-        return fill(convert(Float64, bound), n) # TODO: change to T
+        T = typeof(default_value)
+        return fill(convert(T, bound), n)
     else
         return bound
     end
@@ -146,25 +149,81 @@ function print_table(result::OptimResult)
     if result.iter == 0
         separator = "-"^70
         @info separator
-        headers = ["Iteration", "theta", "||x_k - x_{k-1}||_∞/max(1, ||x_{k-1}||_∞)"]
+        headers = ["Iter", "|θ(x^k)|", "    ||x^k - x^{k-1}||/max{1, ||x^{k-1}||}"]
         n_fields = length(headers)
-        format_str = join(["%$(10+i*3)s" for i in 0:(n_fields-1)], "  ")
+        # format_str = join(["%$(7+i*8)s" for i in 0:(n_fields-1)], "  ")
+        format_str = "%7s  %14s  %25s"
         fmt = Printf.Format(format_str)
+        # fmt = "%7s  %15s  %16s"
         header_str = Printf.format(fmt, headers...)
         
         @info header_str
         @info separator
         
         # Print progress row
-        progress_str = @sprintf("%6d  %18.6e  %16.6e", 
-                result.iter, result.theta, 0.0)
+        progress_str = @sprintf("%5d  %18.6e  %25.6e", 
+                result.iter, result.abs_theta, 0.0)
         @info progress_str
     else
         # Print progress row
-        progress_str = @sprintf("%6d  %18.6e  %16.6e", 
-                result.iter, result.theta, result.norm_progress)
+        progress_str = @sprintf("%5d  %18.6e  %25.6e", 
+                result.iter, result.abs_theta, result.norm_progress)
         @info progress_str
     end
+end
+
+"""
+    BFGS_update!(B, n, m, x, x_prev, JF, JF_prev)
+
+Update B matrices using BFGS formula for each objective.
+
+# Arguments:
+- `B::Vector{<:AbstractMatrix{T}}`: BFGS matrices to be updated in-place
+- `n::Int`: dimension of the input space
+- `m::Int`: number of objective functions
+- `x::AbstractVector{T}`: current point
+- `x_prev::AbstractVector{T}`: previous point
+- `JF::AbstractMatrix{T}`: current Jacobian (m x n)
+- `JF_prev::AbstractMatrix{T}`: previous Jacobian (m x n)
+
+# Returns:
+- `B`: updated BFGS matrices
+"""
+function BFGS_update!(B::Vector{<:AbstractMatrix{T}}, n::Int, m::Int, 
+                     x::AbstractVector{T}, x_prev::AbstractVector{T}, 
+                     JF::AbstractMatrix{T}, JF_prev::AbstractMatrix{T}) where {T<:AbstractFloat}
+    
+    # Vetor s: diferença entre pontos consecutivos
+    s = x - x_prev
+    
+    # Vetores temporários para cálculos intermediários
+    Bs = Vector{T}(undef, n)
+    
+    # Atualiza as m matrizes BFGS (uma para cada função objetivo)
+    for j in 1:m
+        # Vetor y: diferença entre os gradientes consecutivos da função objetivo j
+        y = JF[j,:] - JF_prev[j,:]
+        
+        # Produto interno s'y (critério de curvatura)
+        s_dot_y = dot(s, y)
+        
+        # Somente atualiza a matriz BFGS se s'y > 0 (condição de curvatura positiva)
+        if s_dot_y > zero(T)
+            # Calcula B*s reusando o vetor Bs
+            mul!(Bs, B[j], s)
+            sBs = dot(s, Bs)
+            
+            # Atualiza B[j] in-place usando a fórmula BFGS
+            for i in 1:n
+                for k in 1:n
+                    B[j][i,k] -= (Bs[i] * Bs[k]) / sBs - (y[i] * y[k]) / s_dot_y
+                end
+            end
+        end
+        # Se s'y <= 0, não faz nada, mantendo B[j] inalterado
+    end
+    
+    return B  # retorna as matrizes atualizadas para encadeamento de chamadas
 end
 
 # """
@@ -257,3 +316,85 @@ end
     
 #     return true
 # end
+
+"""
+    diff(f!, x, j; method=:central, λ=sqrt(eps(T)))
+
+Calculate the j-th row of the Jacobian using finite differences.
+
+# Arguments:
+- `f!::Function`: Function to evaluate the objective function f(x): R^n -> R^m
+- `x::AbstractVector{T}`: Point where the Jacobian will be evaluated
+- `j::Int`: Index of the objective function (1 to m)
+- `method::Symbol`: Finite difference method (:forward, :backward, :central)
+- `λ::T`: Step size for finite differences
+
+# Returns:
+- `grad::Vector{T}`: j-th row of the Jacobian
+"""
+function diff(f!::Function, x::AbstractVector{T}, j::Int; method=:central, λ=sqrt(eps(T))) where {T<:AbstractFloat}
+    n = length(x)
+    grad = zeros(T, n)
+    e = Matrix{T}(I, n, n) # Matriz identidade para vetores canônicos
+    
+    # Avaliar f no ponto x
+    f_x = zeros(T, n)  # Assumindo que f retorna um vetor de tamanho n
+    f!(f_x, x)
+    
+    # Calcular a linha j da Jacobiana usando diferenças finitas
+    if method == :forward
+        for i in 1:n
+            x_plus = x + λ * e[:, i]
+            f_x_plus = zeros(T, n)
+            f!(f_x_plus, x_plus)
+            grad[i] = (f_x_plus[j] - f_x[j]) / λ
+        end
+    elseif method == :backward
+        for i in 1:n
+            x_minus = x - λ * e[:, i]
+            f_x_minus = zeros(T, n)
+            f!(f_x_minus, x_minus)
+            grad[i] = (f_x[j] - f_x_minus[j]) / λ
+        end
+    elseif method == :central
+        for i in 1:n
+            x_plus = x + λ * e[:, i]
+            x_minus = x - λ * e[:, i]
+            f_x_plus = zeros(T, n)
+            f_x_minus = zeros(T, n)
+            f!(f_x_plus, x_plus)
+            f!(f_x_minus, x_minus)
+            grad[i] = (f_x_plus[j] - f_x_minus[j]) / (2 * λ)
+        end
+    else
+        error("Método inválido para cálculo de diferenças finitas: $method")
+    end
+    
+    return grad
+end
+
+"""
+    jacobian_finite_diff(f!, x, m; method=:central, λ=sqrt(eps(T)))
+
+Calculate the full Jacobian using finite differences.
+
+# Arguments:
+- `f!::Function`: Function to evaluate the objective function f(x): R^n -> R^m
+- `x::AbstractVector{T}`: Point where the Jacobian will be evaluated
+- `m::Int`: Number of objective functions
+- `method::Symbol`: Finite difference method (:forward, :backward, :central)
+- `λ::T`: Step size for finite differences
+
+# Returns:
+- `J::Matrix{T}`: Full Jacobian matrix
+"""
+function jacobian_finite_diff(f!::Function, x::AbstractVector{T}, m::Int; method=:central, λ=sqrt(eps(T))) where {T<:AbstractFloat}
+    J = zeros(T, m, length(x))
+    
+    # Calcular cada linha da jacobiana
+    for j in 1:m
+        J[j, :] = diff(f!, x, j, method=method, λ=λ)
+    end
+    
+    return J
+end

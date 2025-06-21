@@ -79,7 +79,21 @@ function armijo(F::Function, x::AbstractVector{T}, d::AbstractVector{T}, Fx::Abs
 
     function φ(α::T) where {T<:AbstractFloat}
         result.nfev += 1
-        return F(x + α * d)
+        
+        # Chamar F com o novo formato de retorno (valor, erro)
+        F_val, error_msg = F(x + α * d)
+        
+        # Verificar se houve erro na avaliação
+        if F_val === nothing
+            # Propagar o erro para cima
+            result.success = false
+            result.message = error_msg
+            # Retornar um valor que fará com que a condição de Armijo falhe
+            # para garantir que o algoritmo pare
+            return fill(T(Inf), m)
+        end
+        
+        return F_val
     end
 
     φ_grad_0 = [dot(Jfx[i,:], d) for i in 1:m]
@@ -95,8 +109,6 @@ function armijo(F::Function, x::AbstractVector{T}, d::AbstractVector{T}, Fx::Abs
     end
 
     return result
-
-    
 end
 
 function safeguarded_backtrack(α::T, φ::T, φ_grad_0::T, φ_0::T; τ₁::T=0.05, τ₂::T=0.95) where {T<:AbstractFloat}
@@ -157,21 +169,26 @@ end
 
 function BacktrackMO!(result::LineSearchResult, φ::Function, φ_grad_0::Vector{T}, φ_0::Vector{T}, factor::T, options::ArmijoParams) where {T<:AbstractFloat}
 
-    #Check if the initial step size satisfies the Armijo condition
-    failed_indices = findall(.!(φ(options.alpha_init) .<= φ_0 .+ options.rho * options.alpha_init * factor))
-    
-    if isempty(failed_indices)
-        result.stp = options.alpha_init
-        result.message = "A step size that satisfies the Armijo condition was found"
-        return result
-    end
-
     if options.verbose >= 1
         @info "Starting Armijo line search"
     end
 
+    #Check if the initial step size satisfies the Armijo condition
+    φ_val = φ(options.alpha_init)
     α = options.alpha_init
-    φ_val = φ(α)
+    
+    # Verificar se houve erro na avaliação
+    if !result.success
+        return result
+    end
+    
+    failed_indices = findall(.!(φ_val .<= φ_0 .+ options.rho * α * factor))
+    
+    if isempty(failed_indices)
+        result.stp = α
+        result.message = "A step size that satisfies the Armijo condition was found"
+        return result
+    end
 
     for i in 1:options.max_iter
 
@@ -188,6 +205,11 @@ function BacktrackMO!(result::LineSearchResult, φ::Function, φ_grad_0::Vector{
         end
 
         φ_val = φ(α)
+        
+        # Verificar se houve erro na avaliação
+        if !result.success
+            return result
+        end
         
         failed_indices = findall(.!(φ_val .<= φ_0 .+ options.rho * α * factor))
         if isempty(failed_indices)
