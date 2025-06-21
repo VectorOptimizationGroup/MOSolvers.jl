@@ -53,7 +53,7 @@ function CondG(evalf::Function, evalJf::Function, A::Vector{<:AbstractMatrix{T}}
 
     n = length(x0)
     m = length(A)
-    A2n = [A[i]; -A[i] for i in 1:m]
+    A2n = [[A[i]; -A[i]] for i in 1:m]
     b2n = [delta * ones(2*n) for i in 1:m]
 
     # Validações
@@ -87,13 +87,13 @@ function CondG(evalf::Function, evalJf::Function, A::Vector{<:AbstractMatrix{T}}
 
     function f!(f, x)
         result.n_f_evals += 1
-        f = evalf(x)
+        f .= evalf(x)
         return f
     end
 
     function Jf!(Jf, x)
         result.n_Jf_evals += 1
-        Jf = evalJf(x)
+        Jf .= evalJf(x)
         return Jf
     end
 
@@ -120,6 +120,9 @@ function CondG(evalf::Function, evalJf::Function, A::Vector{<:AbstractMatrix{T}}
             if !success
                 result.success = false
                 result.message = "The subproblem of CondG failed: " * message #QUESTION: Porque * message?
+            elseif abs(theta) <= 1e-15
+                result.success = true
+                result.message = "The solution was found"
             end
             return theta, p
         elseif method == :proxgrad
@@ -144,7 +147,7 @@ function CondG(evalf::Function, evalJf::Function, A::Vector{<:AbstractMatrix{T}}
 
 
 
-    _CondG_optimize!(result, f!, Jf!, h!, subproblem, options, callback)
+    _CondG_optimize!(result, f!, Jf!, h!, m, subproblem, options, callback)
     result.total_time = time() - start_time
     return result
 end
@@ -154,20 +157,26 @@ end
 
 Função interna que implementa o algoritmo CondG.
 """
-function _CondG_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::Function, subproblem::Function, options::CondGParams, callback::Function) where {T<:AbstractFloat}
+function _CondG_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::Function, m::Int, subproblem::Function, options::CondGParams, callback::Function)
     
-    # Define the composite objective function F(x) = f(x) + h(x)
-    function F!(F, x)
-        F = f!(F, x) + h!(F, x)
-        return F
-    end
 
     # Initialize optimization
     x = copy(result.x)
     n = length(x)
-    m = length(subproblem.A)
+
+    T = eltype(x)
+    Fx = zeros(T, m)
     JF = zeros(T, m, n)
     h = zeros(T, m)
+
+        # Define the composite objective function F(x) = f(x) + h(x)
+    function F!(x; m::Int=m)
+        Fx = zeros(T, m)
+        h = zeros(T, m)
+        f!(Fx, x)
+        h!(h, x)
+        return Fx + h
+    end
     
     if options.verbose > 0
         @info "----------------------------------------------------------------------"
@@ -181,7 +190,8 @@ function _CondG_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::
     end
 
     for iter in 1:options.max_iter
-        # Compute the Jacobian of f
+        # Compute F and JF
+        f!(Fx, x)
         Jf!(JF, x)
         h!(h, x)
         if !result.success
@@ -200,7 +210,7 @@ function _CondG_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::
         d = p - x
 
         # Compute the step size
-        line_search_result = armijo(F!, x, d, Fx, Jf, theta)
+        line_search_result = armijo(F!, x, d, Fx + h, JF, factor=-abs(theta))
 
         if !line_search_result.success
             result.message = line_search_result.message

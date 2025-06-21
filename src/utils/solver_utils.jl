@@ -99,12 +99,11 @@ function evalh!(h::AbstractVector{T}, x::AbstractVector{T}, SubProbParams::SubPr
     n = length(x)
     m = length(SubProbParams.A)
     
-
-    # Create the model
-    model = Model(HiGHS.Optimizer)
-    set_silent(model)
-
     for j = 1:m
+        # Create a new model for each objective
+        model = Model(HiGHS.Optimizer)
+        set_silent(model)
+        
         # Define variables
         @variable(model, z[1:n])
 
@@ -127,7 +126,6 @@ function evalh!(h::AbstractVector{T}, x::AbstractVector{T}, SubProbParams::SubPr
             @warn "ERROR: Linear program could not be solved! Status: $(termination_status(model))"
             return false, "Failed evaluating h_$j(x^k)."
         end
-
     end
 
     return true, "All subproblems solved successfully"

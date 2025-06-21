@@ -15,7 +15,7 @@ corresponds to the multi-objective Armijo condition for the step-size α.
 Here, ANYTHING(x) is a function of x that is used to define the sufficient decrease condition.
 For example:
     • ANYTHING(x) = JF(x) * d # Where JF(x) is the Jacobian of F at x # See [1]
-    • ANYTHING(x) = max{φ'ᵢ(0) : i ∈ {1,...,m}} = max{F'ᵢ(x)ᵀ * d : i ∈ {1,...,m}} # See [2]
+    • ANYTHING(x) = max{∇φᵢ(0) : i ∈ {1,...,m}} = max{∇Fᵢ(x)ᵀ * d : i ∈ {1,...,m}} # See [2]
     • ANYTHING(x) = -|θ(x)| # Where θ(x) is the optimal value of the subproblem associated with finding the descent direction d # See [3]
     
 See the following references for more details about choosing the ANYTHING(x) function:
@@ -44,7 +44,7 @@ function ArmijoParams(; verbose=0, max_iter=1000, rho=1e-4, alpha_init=1.0, alph
     if rho <= 0
         error("The reduction factor rho must be positive")
     end
-    if alpha_init <= alpha_min || alpha_max <= alpha_init
+    if alpha_init < alpha_min || alpha_max < alpha_init
         error("The initial step size alpha_init must belong to the interval [alpha_min, alpha_max]")
     end
     if alpha_max <= alpha_min
@@ -65,16 +65,12 @@ mutable struct LineSearchResult{T<:AbstractFloat}
     message::String # Message
 end
 
-function LineSearchResult(; stp::T, F_final::AbstractVector{T}, nfev::Integer, success::Bool, message::String) where {T<:AbstractFloat}
-    stp = T(0)
-    nfev = 0
-    success = true
-    message = "The Armijo line search has not started"
-    return LineSearchResult{T}(stp, F_final, nfev, success, message)
+function LineSearchResult(; stp::T=0.0, F_final::AbstractVector{T}, nfev::Int=0, success::Bool=true, message::String="The Armijo line search has not started") where {T<:AbstractFloat}
+    return LineSearchResult(stp, F_final, nfev, success, message)
 end
 
 function armijo(F::Function, x::AbstractVector{T}, d::AbstractVector{T}, Fx::AbstractVector{T}, 
-                          Jfx::Vector{<:AbstractMatrix{T}}; factor::T=nothing, options::ArmijoParams=ArmijoParams()) where {T<:AbstractFloat}
+                          Jfx::AbstractMatrix{T}; factor::T=nothing, options::ArmijoParams=ArmijoParams()) where {T<:AbstractFloat}
     
     
     result = LineSearchResult(F_final=Fx)
@@ -86,13 +82,13 @@ function armijo(F::Function, x::AbstractVector{T}, d::AbstractVector{T}, Fx::Abs
         return F(x + α * d)
     end
 
-    φ'_0 = [dot(Jfx[i], d) for i in 1:m]
+    φ_grad_0 = [dot(Jfx[i,:], d) for i in 1:m]
 
     if factor == nothing
-        factor = maximum(φ'_0)
+        factor = maximum(φ_grad_0)
     end
 
-    BacktrackMO!(result, φ, φ'_0, Fx, factor, options)
+    BacktrackMO!(result, φ, φ_grad_0, Fx, factor, options)
     
     if options.verbose >= 1
         @info result.message
@@ -103,7 +99,7 @@ function armijo(F::Function, x::AbstractVector{T}, d::AbstractVector{T}, Fx::Abs
     
 end
 
-function safeguarded_backtrack(α::T, φ::T, φ'_0::T, φ_0::T; τ₁::T=0.05, τ₂::T=0.95) where {T<:AbstractFloat}
+function safeguarded_backtrack(α::T, φ::T, φ_grad_0::T, φ_0::T; τ₁::T=0.05, τ₂::T=0.95) where {T<:AbstractFloat}
 
     """
     Calculates a new step `stpt` via quadratic interpolation,
@@ -115,7 +111,7 @@ function safeguarded_backtrack(α::T, φ::T, φ'_0::T, φ_0::T; τ₁::T=0.05, �
 
     where:
     - `f₀` is the function value at the current point (α = 0),
-    - `g₀` is the directional derivative ∇fᵗd at the current point,
+    - `g₀` is the directional derivative ∇f^T d at the current point,
     - `f` is the function value after a step `α` (current `stp`).
 
     Estimamos o coeficiente quadrático por:
@@ -124,7 +120,7 @@ function safeguarded_backtrack(α::T, φ::T, φ'_0::T, φ_0::T; τ₁::T=0.05, �
 
     and the minimum of the parabola (new candidate step) is given by:
 
-        stpt = (- g₀ * α²) / (2.0 * (φ(α) - φ₀ - α * φ'_0))
+        stpt = (- g₀ * α²) / (2.0 * (φ(α) - φ₀ - α * φ_grad_0))
 
     This step is a prediction of where the function can reach a minimum
     based on three points: f₀, f and g₀. However, as the quadratic interpolation
@@ -143,9 +139,9 @@ function safeguarded_backtrack(α::T, φ::T, φ'_0::T, φ_0::T; τ₁::T=0.05, �
     If `stpt` falls outside this interval, we opt for a more conservative strategy,
     such as the bisection of the search interval.
 """
-    if φ'_0 < T(0)
+    if φ_grad_0 < zero(T)
 
-        α_trial = (- φ'_0 * α²) / (T(2.0) * (φ - φ₀ - α * φ'_0))
+        α_trial = (- φ_grad_0 * α^2) / (T(2.0) * (φ - φ_0 - α * φ_grad_0))
 
         if !(τ₁ * α <= α_trial <= τ₂ * α)
             α *= T(0.5)
@@ -159,10 +155,10 @@ function safeguarded_backtrack(α::T, φ::T, φ'_0::T, φ_0::T; τ₁::T=0.05, �
     return α
 end
 
-function BacktrackMO!(result::LineSearchResult, φ::Function, φ'_0::Vector{T}, φ_0::Vector{T}, factor::T, options::ArmijoParams) where {T<:AbstractFloat}
+function BacktrackMO!(result::LineSearchResult, φ::Function, φ_grad_0::Vector{T}, φ_0::Vector{T}, factor::T, options::ArmijoParams) where {T<:AbstractFloat}
 
     #Check if the initial step size satisfies the Armijo condition
-    failed_indices = findall(.!(φ(options.alpha_init) .<= φ_0 + options.rho * options.alpha_init * factor))
+    failed_indices = findall(.!(φ(options.alpha_init) .<= φ_0 .+ options.rho * options.alpha_init * factor))
     
     if isempty(failed_indices)
         result.stp = options.alpha_init
@@ -180,7 +176,7 @@ function BacktrackMO!(result::LineSearchResult, φ::Function, φ'_0::Vector{T}, 
     for i in 1:options.max_iter
 
         for j in failed_indices
-            α = safeguarded_backtrack(α, φ_val[j], φ'_0[j], φ_0[j])
+            α = safeguarded_backtrack(α, φ_val[j], φ_grad_0[j], φ_0[j])
             break
         end
         
@@ -193,7 +189,7 @@ function BacktrackMO!(result::LineSearchResult, φ::Function, φ'_0::Vector{T}, 
 
         φ_val = φ(α)
         
-        failed_indices = findall(.!(φ_val .<= φ_0 + options.rho * α * factor))
+        failed_indices = findall(.!(φ_val .<= φ_0 .+ options.rho * α * factor))
         if isempty(failed_indices)
             result.stp = α
             result.F_final = φ_val
@@ -203,7 +199,7 @@ function BacktrackMO!(result::LineSearchResult, φ::Function, φ'_0::Vector{T}, 
             
     end
 
-    result.stp =  T(0)
+    result.stp =  zero(T)
     result.F_final = φ_val
     result.message = "The maximum number of iterations for the Armijo line search was reached"
     result.success = false
