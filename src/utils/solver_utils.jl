@@ -80,20 +80,35 @@ Estrutura que armazena os parâmetros de um subproblema.
 # Campos
 - `A::Vector{<:AbstractMatrix{T}}`: matrizes A do subproblema
 - `b::Vector{<:AbstractVector{T}}`: vetores b do subproblema
+- `lb::AbstractVector{T}`: limites inferiores das variáveis
+- `ub::AbstractVector{T}`: limites superiores das variáveis
 """
-
 struct SubProblemParams{T<:AbstractFloat}
     A::Vector{<:AbstractMatrix{T}}
     b::Vector{<:AbstractVector{T}}
     lb::AbstractVector{T}
     ub::AbstractVector{T}
-end
-
-# Em solver_utils.jl (se ainda não existir)
-function SubProblemParams(A::Vector{<:AbstractMatrix{T}}, b::Vector{<:AbstractVector{T}}, lb::AbstractVector{T}, ub::AbstractVector{T}) where {T<:AbstractFloat}
-    # Validações básicas
-    @assert length(A) == length(b) "Número de matrizes A deve ser igual ao número de vetores b"
-    return SubProblemParams{T}(A, b, lb, ub)
+    
+    # Construtor interno com validações
+    function SubProblemParams(A::Vector{<:AbstractMatrix{T}}, b::Vector{<:AbstractVector{T}}, lb::AbstractVector{T}, ub::AbstractVector{T}) where {T<:AbstractFloat}
+        # Validações básicas
+        @assert length(A) == length(b) "Número de matrizes A deve ser igual ao número de vetores b"
+        @assert length(lb) == length(ub) "Limites inferiores e superiores devem ter o mesmo tamanho"
+        
+        # Validação adicional: verificar se as dimensões são compatíveis
+        if !isempty(A) && !isempty(b)
+            n_vars = size(A[1], 2)  # número de colunas da primeira matriz A
+            @assert length(lb) == n_vars "Dimensão dos limites deve ser igual ao número de variáveis"
+            @assert length(ub) == n_vars "Dimensão dos limites deve ser igual ao número de variáveis"
+            
+            # Verificar se todas as matrizes A têm o mesmo número de colunas
+            for (i, A_i) in enumerate(A)
+                @assert size(A_i, 2) == n_vars "Todas as matrizes A devem ter o mesmo número de colunas (variáveis)"
+            end
+        end
+        
+        return new{T}(A, b, lb, ub)
+    end
 end
 
 function evalh!(h::AbstractVector{T}, x::AbstractVector{T}, SubProbParams::SubProblemParams) where {T<:AbstractFloat}
@@ -151,10 +166,8 @@ function print_table(result::OptimResult)
         @info separator
         headers = ["Iter", "|θ(x^k)|", "    ||x^k - x^{k-1}||/max{1, ||x^{k-1}||}"]
         n_fields = length(headers)
-        # format_str = join(["%$(7+i*8)s" for i in 0:(n_fields-1)], "  ")
         format_str = "%7s  %14s  %25s"
         fmt = Printf.Format(format_str)
-        # fmt = "%7s  %15s  %16s"
         header_str = Printf.format(fmt, headers...)
         
         @info header_str
@@ -225,97 +238,6 @@ function BFGS_update!(B::Vector{<:AbstractMatrix{T}}, n::Int, m::Int,
     
     return B  # retorna as matrizes atualizadas para encadeamento de chamadas
 end
-
-# """
-#     SolverResult
-
-# Estrutura que armazena os resultados de um solver de otimização multiobjetivo.
-
-# # Campos
-# - `pareto_front::Vector{Vector{Float64}}`: conjunto de pontos não-dominados no espaço de objetivos
-# - `pareto_set::Vector{Vector{Float64}}`: conjunto de pontos não-dominados no espaço de variáveis
-# - `iterations::Int`: número de iterações realizadas
-# - `success::Bool`: indicador de sucesso
-# - `message::String`: mensagem descritiva do resultado
-# """
-# struct SolverResult
-#     pareto_front::Vector{Vector{Float64}}
-#     pareto_set::Vector{Vector{Float64}}
-#     iterations::Int
-#     success::Bool
-#     message::String
-# end
-
-# """
-#     get_pareto_front(result::SolverResult)
-
-# Retorna o conjunto de pontos não-dominados no espaço de objetivos.
-# """
-# get_pareto_front(result::SolverResult) = result.pareto_front
-
-# """
-#     get_pareto_set(result::SolverResult)
-
-# Retorna o conjunto de pontos não-dominados no espaço de variáveis.
-# """
-# get_pareto_set(result::SolverResult) = result.pareto_set
-
-# """
-#     is_dominated(f1, f2)
-
-# Verifica se o ponto f1 é dominado por f2 em um problema de minimização.
-# Retorna true se f2 domina f1, false caso contrário.
-# """
-# function is_dominated(f1::Vector{Float64}, f2::Vector{Float64})
-#     all_leq = true
-#     any_less = false
-    
-#     for i in 1:length(f1)
-#         if f1[i] < f2[i]
-#             all_leq = false
-#             break
-#         elseif f1[i] > f2[i]
-#             any_less = true
-#         end
-#     end
-    
-#     return any_less && all_leq
-# end
-
-# """
-#     update_pareto_set!(pareto_front, pareto_set, f_new, x_new)
-
-# Atualiza o conjunto de Pareto com um novo ponto.
-# Retorna true se o ponto foi adicionado, false caso contrário.
-# """
-# function update_pareto_set!(pareto_front::Vector{Vector{Float64}}, 
-#                            pareto_set::Vector{Vector{Float64}}, 
-#                            f_new::Vector{Float64}, 
-#                            x_new::Vector{Float64})
-#     # Verifica se o novo ponto é dominado por algum ponto existente
-#     for f in pareto_front
-#         if is_dominated(f_new, f)
-#             return false
-#         end
-#     end
-    
-#     # Remove pontos dominados pelo novo ponto
-#     i = 1
-#     while i <= length(pareto_front)
-#         if is_dominated(pareto_front[i], f_new)
-#             deleteat!(pareto_front, i)
-#             deleteat!(pareto_set, i)
-#         else
-#             i += 1
-#         end
-#     end
-    
-#     # Adiciona o novo ponto
-#     push!(pareto_front, copy(f_new))
-#     push!(pareto_set, copy(x_new))
-    
-#     return true
-# end
 
 """
     diff(f!, x, j; method=:central, λ=sqrt(eps(T)))

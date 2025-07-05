@@ -22,3 +22,7 @@ Manifest.toml
 # Diretórios de cache
 .cache/
 .julia/ 
+
+*.png
+
+/scripts/
