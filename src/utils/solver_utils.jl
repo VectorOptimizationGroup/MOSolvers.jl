@@ -116,6 +116,21 @@ function evalh!(h::AbstractVector{T}, x::AbstractVector{T}, SubProbParams::SubPr
     n = length(x)
     m = length(SubProbParams.A)
     
+    # Check if any SubProbParams.b[j] has any zero value
+    has_zero = false
+    for j = 1:m
+        if any(SubProbParams.b[j] .== 0)
+            has_zero = true
+            break
+        end
+    end
+    
+    # If any b[j] has a zero value, set all h to zero
+    if has_zero
+        fill!(h, zero(T))
+        return true, "All h set to zero due to zero values in b"
+    end
+    
     for j = 1:m
         # Create a new model for each objective
         model = Model(HiGHS.Optimizer)
