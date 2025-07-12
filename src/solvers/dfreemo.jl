@@ -158,7 +158,7 @@ function DFreeMO(evalf::Function, A::Vector{<:AbstractMatrix{T}}, delta::T,
                 result.success = false
                 result.message = "The subproblem of DFreeMO failed: " * message
             elseif abs(theta) <= 1e-15
-                result.success = true
+                result.success = true # QUESTION: If the struct result is initialized with success = true, why is it necessary to set it to true again?
                 result.message = "The solution was found"
             end
             return theta, p
@@ -195,7 +195,8 @@ function _DFreeMO_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!
     sigma = options.sigma
 
     # Initialize lambda
-    lambda = (options.epsilon / (options.sigma*sqrt(n)))^10
+    # lambda = (options.epsilon / (options.sigma*sqrt(n)))^10
+    lambda = (options.epsilon / (options.sigma*sqrt(n))) * rand(T)
 
     # Define the composite objective function F(x) = f(x) + h(x)
     function F!(x; m::Int=m)
@@ -260,13 +261,17 @@ function _DFreeMO_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!
             result.abs_theta = abs(theta)
 
             # Check convergence
-            if norm(p - x) <= options.epsilon
+            if sigma * norm(p - x) <= options.epsilon
+                x = p
                 if options.verbose > 0
                     @info "Converged at iteration $iter with small tolerance"
                 end
                 result.success = true
                 result.message = "Solution was found"
-                break
+                # Update result
+                norm_progress = norm(x - result.x, Inf) / max(1, norm(result.x, Inf))
+                update!(result, x=x, norm_progress=norm_progress, iter=iter, store_trace=options.store_trace)
+                return result
             end
 
             # Check sufficient decrease
@@ -317,10 +322,13 @@ function _DFreeMO_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!
                 if !result.success || abs(theta) <= options.opt_tol
                     break
                 end
-            elseif options.stop_criteria == :dfreemo && abs(theta) <= options.opt_tol
+            elseif options.stop_criteria == :dfreemo &&  result.abs_theta <= options.opt_tol
                 break
             end
         end
+
+        # Update lambda
+        lambda = (options.epsilon / (sigma*sqrt(n))) * rand(T)
     end
     
     if options.verbose > 0 && result.iter >= options.max_iter
