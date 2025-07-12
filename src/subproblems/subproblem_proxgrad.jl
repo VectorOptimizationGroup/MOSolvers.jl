@@ -17,28 +17,38 @@ function subproblem_proxgrad(x::AbstractVector{T}, Jf::AbstractMatrix{T}, h::Abs
     @variable(model, tau)
     @variable(model, SubProbParams.lb[i] <= u[i=1:n] <= SubProbParams.ub[i])  # Variável u com limites
 
-    # Create variables w_j for each objective function
-    w = Dict()
-    for j in 1:m
-        w[j] = @variable(model, [1:size(SubProbParams.A[j], 1)], lower_bound=0)
+    if minimum(h) != 0.0
+        # Create variables w_j for each objective function
+        w = Dict()
+        for j in 1:m
+            w[j] = @variable(model, [1:size(SubProbParams.A[j], 1)], lower_bound=0)
+        end
     end
     
     # Define objective function: tau + (sigma/2)||u - x||^2
     @objective(model, Min, tau + 0.5 * sigma * sum((u[i] - x[i])^2 for i in 1:n))
 
     # Restrições
-    for j in 1:m
-        # Restrição: <b_j, w_j> - h_j(x) + <∇f_j(x), u - x> ≤ tau
-        @constraint(model, 
-            dot(SubProbParams.b[j], w[j]) - h[j] + dot(Jf[j,:], u .- x) <= tau)
-        
-        # Restrição: A_j^T w_j = u
-        for i in 1:n
+    if minimum(h) != 0.0
+        for j in 1:m
+            # Restrição: <b_j, w_j> - h_j(x) + <∇f_j(x), u - x> ≤ tau
             @constraint(model, 
-                sum(SubProbParams.A[j][r, i] * w[j][r] for r in 1:size(SubProbParams.A[j], 1)) == u[i])
+                dot(SubProbParams.b[j], w[j]) - h[j] + dot(Jf[j,:], u .- x) <= tau)
+            
+            # Restrição: A_j^T w_j = u
+            for i in 1:n
+                @constraint(model, 
+                    sum(SubProbParams.A[j][r, i] * w[j][r] for r in 1:size(SubProbParams.A[j], 1)) == u[i])
+            end
+        end
+    else
+        for j in 1:m
+            # Restrição: <∇f_j(x), u - x> ≤ tau
+            @constraint(model, 
+                dot(Jf[j,:], u .- x) <= tau)
         end
     end
-    
+
     # Solve the problem
     optimize!(model)
 
