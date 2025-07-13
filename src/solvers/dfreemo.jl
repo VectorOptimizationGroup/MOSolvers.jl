@@ -50,7 +50,7 @@ end
 # - `evalJf::Union{Nothing,Function}=nothing`: Function to evaluate the Jacobian of the objective function Jf(x): R^n -> R^{m×n} (optional, uses finite differences if not provided)
 # - `lb::Union{Nothing,AbstractVector{T},Number}=nothing`: Lower bounds
 # - `ub::Union{Nothing,AbstractVector{T},Number}=nothing`: Upper bounds
-# - `callback::Function`: Callback function to be called at each iteration
+# - `callback::Function=noop_callback`: Optional hook executed every iteration, with signature `callback(iter, result) -> Bool`. Return `true` to stop; any other value continues. Use for logging or custom stopping rules.
 """
 
 function DFreeMO(evalf::Function, A::Vector{<:AbstractMatrix{T}}, delta::T, 
@@ -198,6 +198,9 @@ function _DFreeMO_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!
     # lambda = (options.epsilon / (options.sigma*sqrt(n)))^10
     lambda = (options.epsilon / (options.sigma*sqrt(n))) * rand(T)
 
+    # Início da contagem de tempo para verificação de tempo máximo
+    start_time = time()
+
     # Define the composite objective function F(x) = f(x) + h(x)
     function F!(x; m::Int=m)
         Fx = zeros(T, m)
@@ -233,6 +236,13 @@ function _DFreeMO_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!
     end
 
     for iter in 1:options.max_iter
+
+        if time() - start_time >= options.max_time
+            result.success = false
+            result.message = "Maximum time reached $(options.max_time)"
+            return result
+        end
+
         # Compute F and JF
         f!(Fx, x)
         Jf!(JF, x; lambda=lambda)
@@ -329,6 +339,15 @@ function _DFreeMO_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!
 
         # Update lambda
         lambda = (options.epsilon / (sigma*sqrt(n))) * rand(T)
+
+        abort = callback(iter, result)
+
+        # External interruption
+        if abort === true
+            result.success = false   
+            result.message = "Interrupted by callback"
+            return result
+        end
     end
     
     if options.verbose > 0 && result.iter >= options.max_iter
