@@ -44,7 +44,7 @@ end
 # - `options::ProxGradParams=ProxGrad_options()`: Options for the ProxGrad solver
 # - `lb::Union{Nothing,AbstractVector{T},Number}=nothing`: Lower bounds
 # - `ub::Union{Nothing,AbstractVector{T},Number}=nothing`: Upper bounds
-# - `callback::Function`: Callback function to be called at each iteration
+# - `callback::Function=noop_callback`: Optional hook executed every iteration, with signature `callback(iter, result) -> Bool`. Return `true` to stop; any other value continues. Use for logging or custom stopping rules.
 """
 
 function ProxGrad(evalf::Function, evalJf::Function, A::Vector{<:AbstractMatrix{T}}, delta::T, 
@@ -175,6 +175,9 @@ function _ProxGrad_optimize!(result::OptimResult, f!::Function, Jf!::Function, h
     JF = zeros(T, m, n)
     h = zeros(T, m)
 
+    # Início da contagem de tempo para verificação de tempo máximo
+    start_time = time()
+
     # Define the composite objective function F(x) = f(x) + h(x)
     function F!(x; m::Int=m)
         Fx = zeros(T, m)
@@ -209,6 +212,11 @@ function _ProxGrad_optimize!(result::OptimResult, f!::Function, Jf!::Function, h
     end
 
     for iter in 1:options.max_iter
+        if time() - start_time >= options.max_time
+            result.success = false
+            result.message = "Maximum time reached $(options.max_time)"
+            return result
+        end
         # Compute F and JF
         f!(Fx, x)
         Jf!(JF, x)
@@ -271,6 +279,15 @@ function _ProxGrad_optimize!(result::OptimResult, f!::Function, Jf!::Function, h
                     break
                 end
             end
+        end
+
+        abort = callback(iter, result)
+
+        # External interruption
+        if abort === true
+            result.success = false   
+            result.message = "Interrupted by callback"
+            return result
         end
     end
     
