@@ -264,6 +264,7 @@ function _DFreeMO_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!
             theta, p = subproblem(x, JF, h, :dfreemo; sigma=sigma, B=B)
             result.subproblem_time += time() - start_subproblem_time
             
+            # TODO: Check if this is necessary
             # if !result.success
             #     break
             # end
