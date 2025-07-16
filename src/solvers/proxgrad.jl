@@ -130,7 +130,7 @@ function ProxGrad(evalf::Function, evalJf::Function, A::Vector{<:AbstractMatrix{
             end
             return theta, p
         elseif method == :proxgrad
-            theta, p, success, message = subproblem_proxgrad(x, JF, h, SubProbParams, options.mu)
+            theta, p, success, message = subproblem_proxgrad(x, JF, h, SubProbParams; sigma=options.mu)
             if !success
                 result.success = false
                 result.message = "The subproblem of ProxGrad failed: " * message
