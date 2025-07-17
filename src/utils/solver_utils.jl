@@ -255,62 +255,6 @@ function BFGS_update!(B::Vector{<:AbstractMatrix{T}}, n::Int, m::Int,
 end
 
 """
-    diff(f!, x, j; method=:central, λ=sqrt(eps(T)))
-
-Calculate the j-th row of the Jacobian using finite differences.
-
-# Arguments:
-- `f!::Function`: Function to evaluate the objective function f(x): R^n -> R^m
-- `x::AbstractVector{T}`: Point where the Jacobian will be evaluated
-- `j::Int`: Index of the objective function (1 to m)
-- `method::Symbol`: Finite difference method (:forward, :backward, :central)
-- `λ::T`: Step size for finite differences
-
-# Returns:
-- `grad::Vector{T}`: j-th row of the Jacobian
-"""
-function diff(f!::Function, x::AbstractVector{T}, j::Int; method=:central, λ=sqrt(eps(T))) where {T<:AbstractFloat}
-    n = length(x)
-    grad = zeros(T, n)
-    e = Matrix{T}(I, n, n) # Matriz identidade para vetores canônicos
-    
-    # Avaliar f no ponto x
-    f_x = zeros(T, n)  # Assumindo que f retorna um vetor de tamanho n
-    f!(f_x, x)
-    
-    # Calcular a linha j da Jacobiana usando diferenças finitas
-    if method == :forward
-        for i in 1:n
-            x_plus = x + λ * e[:, i]
-            f_x_plus = zeros(T, n)
-            f!(f_x_plus, x_plus)
-            grad[i] = (f_x_plus[j] - f_x[j]) / λ
-        end
-    elseif method == :backward
-        for i in 1:n
-            x_minus = x - λ * e[:, i]
-            f_x_minus = zeros(T, n)
-            f!(f_x_minus, x_minus)
-            grad[i] = (f_x[j] - f_x_minus[j]) / λ
-        end
-    elseif method == :central
-        for i in 1:n
-            x_plus = x + λ * e[:, i]
-            x_minus = x - λ * e[:, i]
-            f_x_plus = zeros(T, n)
-            f_x_minus = zeros(T, n)
-            f!(f_x_plus, x_plus)
-            f!(f_x_minus, x_minus)
-            grad[i] = (f_x_plus[j] - f_x_minus[j]) / (2 * λ)
-        end
-    else
-        error("Método inválido para cálculo de diferenças finitas: $method")
-    end
-    
-    return grad
-end
-
-"""
     jacobian_finite_diff(f!, x, m; method=:central, λ=sqrt(eps(T)))
 
 Calculate the full Jacobian using finite differences.
@@ -325,13 +269,60 @@ Calculate the full Jacobian using finite differences.
 # Returns:
 - `J::Matrix{T}`: Full Jacobian matrix
 """
-function jacobian_finite_diff(f!::Function, x::AbstractVector{T}, m::Int; method=:central, λ=sqrt(eps(T))) where {T<:AbstractFloat}
-    J = zeros(T, m, length(x))
-    
-    # Calcular cada linha da jacobiana
-    for j in 1:m
-        J[j, :] = diff(f!, x, j, method=method, λ=λ)
+function jacobian_finite_diff(f!::Function, x::AbstractVector{T}, m::Int; method::Symbol=:central, λ::T=sqrt(eps(T))) where {T<:AbstractFloat}
+    # Number of variables
+    n = length(x)
+
+    # Output Jacobian (m × n)
+    J = zeros(T, m, n)
+
+    # Base evaluation f(x) – reused in forward/backward formulas
+    f_base = zeros(T, m)
+    f!(f_base, x)
+
+    # Work buffers reused across iterations to avoid allocations
+    f_plus  = similar(f_base)
+    f_minus = similar(f_base)
+    x_plus  = copy(x)   # updated in place
+    x_minus = copy(x)
+
+    if method == :forward
+        for i in 1:n
+            x_plus[i] += λ
+            f!(f_plus, x_plus)
+            @inbounds for j in 1:m
+                J[j, i] = (f_plus[j] - f_base[j]) / λ
+            end
+            x_plus[i] = x[i]          # restore coordinate
+        end
+
+    elseif method == :backward
+        for i in 1:n
+            x_minus[i] -= λ
+            f!(f_minus, x_minus)
+            @inbounds for j in 1:m
+                J[j, i] = (f_base[j] - f_minus[j]) / λ
+            end
+            x_minus[i] = x[i]
+        end
+
+    elseif method == :central
+        half_inv = T(1) / (2*λ)
+        for i in 1:n
+            x_plus[i]  += λ
+            x_minus[i] -= λ
+            f!(f_plus,  x_plus)
+            f!(f_minus, x_minus)
+            @inbounds for j in 1:m
+                J[j, i] = (f_plus[j] - f_minus[j]) * half_inv
+            end
+            # restore coordinates for the next iteration
+            x_plus[i]  = x[i]
+            x_minus[i] = x[i]
+        end
+    else
+        error("Invalid finite-difference method: $method. Choose :forward, :backward or :central.")
     end
-    
+
     return J
 end
