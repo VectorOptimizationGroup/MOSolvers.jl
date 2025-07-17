@@ -1,5 +1,10 @@
 function subproblem_dfreemo(x::AbstractVector{T}, Jf::AbstractMatrix{T}, h::AbstractVector{T}, SubProbParams::SubProblemParams; sigma::T=1.0, B::Union{Nothing, Vector{<:AbstractMatrix{T}}}=nothing) where {T<:AbstractFloat}
 
+    # Check sigma parameter
+    if !isfinite(sigma) || sigma <= 0
+        return convert(T, NaN), fill(convert(T, NaN), n), false, "Nonlinear program could not be solved!"
+    end
+
     n = length(x)
     m = length(SubProbParams.A)
 
@@ -21,7 +26,7 @@ function subproblem_dfreemo(x::AbstractVector{T}, Jf::AbstractMatrix{T}, h::Abst
     @variable(model, tau)
     @variable(model, SubProbParams.lb[i] <= u[i=1:n] <= SubProbParams.ub[i])  # Variável u com limites
 
-    if minimum(h) != 0.0
+    if minimum(h) != 0.0 #TODO: Perform this check only once
         # Create variables w_j for each objective function
         w = Dict()
         for j in 1:m

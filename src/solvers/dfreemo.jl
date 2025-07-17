@@ -154,6 +154,7 @@ function DFreeMO(evalf::Function, A::Vector{<:AbstractMatrix{T}}, delta::T,
             return theta, p
         elseif method == :dfreemo
             theta, p, success, message = subproblem_dfreemo(x, JF, h, SubProbParams; sigma=sigma, B=B)
+            # TODO: MOVER ESSA MUDANCA DE SUCCESS DIRETAMENTE PARA O SOLVER
             if !success
                 result.success = false
                 result.message = "The subproblem of DFreeMO failed: " * message
@@ -264,10 +265,13 @@ function _DFreeMO_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!
             theta, p = subproblem(x, JF, h, :dfreemo; sigma=sigma, B=B)
             result.subproblem_time += time() - start_subproblem_time
             
-            # TODO: Check if this is necessary
-            # if !result.success
-            #     break
-            # end
+            # Se o subproblema falhou, multiplica sigma por 2 e continua
+            if !result.success || !isfinite(theta) || any(x -> !isfinite(x), p)
+                sigma = sigma * 2
+                # Reset success flag to allow retry
+                result.success = true
+                continue
+            end
 
             result.abs_theta = abs(theta)
 
@@ -286,10 +290,17 @@ function _DFreeMO_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!
             end
 
             # Check sufficient decrease
+            # TODO: Check if is possible not create F_new and h_new (high memorycost)
             F_new = zeros(T, m)
             h_new = zeros(T, m)
             f!(F_new, p)
             h!(h_new, p)
+
+            # Verificar se h! falhou
+            if !result.success
+                break
+            end
+
             F_new .= F_new + h_new
             
             if all(F_new .<= F_prev .- (options.alpha * options.epsilon^2) / (2 * sigma))
@@ -306,7 +317,7 @@ function _DFreeMO_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!
                 sigma = sigma * 2
             end
 
-            if sub_iter == options.max_subproblem_iter
+            if sub_iter >= options.max_subproblem_iter
                 result.success = false
                 result.message = "Subproblem did not converge"
                 break
@@ -322,18 +333,22 @@ function _DFreeMO_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!
         update!(result, x=x, norm_progress=norm_progress, iter=iter, store_trace=options.store_trace)
 
         # Stopping criteria
+        #TODO: This stop criteria need to be improved
         if norm_progress <= options.opt_tol
             if options.stop_criteria == :condg
                 theta, p = subproblem(x, JF, h, :condg)
                 if !result.success || abs(theta) <= options.opt_tol
+                    result.message = "The solution was found using |θ_CondG| <= $(options.opt_tol)"
                     break
                 end
             elseif options.stop_criteria == :proxgrad
                 theta, p = subproblem(x, JF, h, :proxgrad)
                 if !result.success || abs(theta) <= options.opt_tol
+                    result.message = "The solution was found using |θ_ProxGrad| <= $(options.opt_tol)"
                     break
                 end
             elseif options.stop_criteria == :dfreemo &&  result.abs_theta <= options.opt_tol
+                result.message = "The solution was found using |θ_DFreeMO| <= $(options.opt_tol)"
                 break
             end
         end
