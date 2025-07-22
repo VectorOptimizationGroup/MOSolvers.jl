@@ -2,6 +2,7 @@ module MOSolvers
 
     using NLPModels
     using LinearAlgebra
+    using SparseArrays
     using JuMP, HiGHS, Ipopt
     using Printf
 
