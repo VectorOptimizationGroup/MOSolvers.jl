@@ -11,6 +11,7 @@ mutable struct DFreeMOParams{T<:AbstractFloat}
     sigma::T # Sigma parameter for regularization
     alpha::T # Alpha parameter for sufficient decrease
     max_subproblem_iter::Integer # Maximum subproblem iterations
+    lambda_min::T # Minimum lambda for finite differences
 end
 
 
@@ -31,11 +32,11 @@ end
 # - `alpha::T = 0.1`: Alpha parameter for sufficient decrease
 # - `max_subproblem_iter::Integer = 200`: Maximum subproblem iterations
 """
-function DFreeMO_options(; verbose=1, max_iter=1000, opt_tol=1e-4, ftol=1e-4, max_time=3600.0, print_interval=10, stop_criteria=:dfreemo, store_trace=false, epsilon=1e-10, sigma=1.0, alpha=0.1, max_subproblem_iter=200)
+function DFreeMO_options(; verbose=1, max_iter=1000, opt_tol=1e-4, ftol=1e-4, max_time=3600.0, print_interval=10, stop_criteria=:dfreemo, store_trace=false, epsilon=1e-10, sigma=1.0, alpha=0.1, max_subproblem_iter=200, lambda_min=1e-12)
     if stop_criteria ∉ [:condg, :proxgrad, :dfreemo]
         error("The stop criteria is not supported: $stop_criteria")
     end
-    return DFreeMOParams(verbose, max_iter, opt_tol, ftol, max_time, print_interval, stop_criteria, store_trace, epsilon, sigma, alpha, max_subproblem_iter)
+    return DFreeMOParams(verbose, max_iter, opt_tol, ftol, max_time, print_interval, stop_criteria, store_trace, epsilon, sigma, alpha, max_subproblem_iter, lambda_min)
 end
 
 """
@@ -196,8 +197,12 @@ function _DFreeMO_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!
     sigma = options.sigma
 
     # Initialize lambda
-    # lambda = (options.epsilon / (options.sigma*sqrt(n)))^10
-    lambda = (options.epsilon / (options.sigma*sqrt(n))) * rand(T)
+    scale = options.epsilon / (options.sigma*sqrt(n))
+    lambda = ifelse(
+        isfinite(scale) && scale > 0,
+        max(scale * rand(T), options.lambda_min),
+        options.lambda_min
+    )
 
     # Início da contagem de tempo para verificação de tempo máximo
     start_time = time()
@@ -354,7 +359,12 @@ function _DFreeMO_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!
         end
 
         # Update lambda
-        lambda = (options.epsilon / (sigma*sqrt(n))) * rand(T)
+        scale = options.epsilon / (sigma*sqrt(n))
+        lambda = ifelse(
+            isfinite(scale) && scale > 0,
+            max(scale * rand(T), options.lambda_min),
+            options.lambda_min
+        )
 
         abort = callback(iter, result)
 
