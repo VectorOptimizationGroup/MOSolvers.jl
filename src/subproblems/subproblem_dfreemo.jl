@@ -26,21 +26,23 @@ function subproblem_dfreemo(x::AbstractVector{T}, Jf::AbstractMatrix{T}, h::Abst
             end
             # Check condition number for potential issues
             cond_Bj = cond(Bj)
-            if cond_Bj > 1e12  # Very ill-conditioned
+            if cond_Bj > 1e12 && verbose > 0 # Very ill-conditioned
                 @warn "B matrix $j has high condition number: $cond_Bj"
             end
         end
     end
     
-    # Validate constraint matrices
-    for (j, Aj) in enumerate(SubProbParams.A)
-        # Duplicate check, maybe not needed
-        # if size(Aj, 2) != n
-        #     return convert(T, NaN), fill(convert(T, NaN), n), false, "Dimension mismatch in A[$j]"
-        # end
-        # Check for rank deficiency
-        if rank(Aj) < min(size(Aj)...)
-            @warn "Constraint matrix A[$j] may be rank deficient"
+    if minimum(h) != 0.0
+        # Validate constraint matrices
+        for (j, Aj) in enumerate(SubProbParams.A)
+            # Duplicate check, maybe not needed
+            # if size(Aj, 2) != n
+            #     return convert(T, NaN), fill(convert(T, NaN), n), false, "Dimension mismatch in A[$j]"
+            # end
+            # Check for rank deficiency
+            if rank(Aj) < min(size(Aj)...)
+                @warn "Constraint matrix A[$j] may be rank deficient"
+            end
         end
     end
     
@@ -166,7 +168,7 @@ function subproblem_dfreemo(x::AbstractVector{T}, Jf::AbstractMatrix{T}, h::Abst
     # Check solution status
     status = termination_status(model)
 
-    if status in (MOI.OPTIMAL, MOI.LOCALLY_SOLVED)
+    if status in (MOI.OPTIMAL, MOI.LOCALLY_SOLVED, MOI.ALMOST_OPTIMAL, MOI.ALMOST_LOCALLY_SOLVED)
         # Extract solution
         tau_val = value(tau)
         u_val = [value(u[i]) for i in 1:n]
