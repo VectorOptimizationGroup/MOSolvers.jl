@@ -21,12 +21,12 @@ end
 # - `ftol::T = 1e-4`: Function tolerance
 # - `max_time::T = 3600.0`: Maximum time in seconds
 # - `print_interval::Integer = 10`: Print interval
-# - `stop_criteria::Symbol = :proxgrad`:  Additional stop criteria (:condg, :proxgrad, :dfreemo)
+# - `stop_criteria::Symbol = :proxgrad`:  Additional stop criteria (:condg, :proxgrad, :dfpm)
 # - `store_trace::Bool = false`: Whether to store the trace of x during optimization
 # - `mu::T = 1.0`: Proximal parameter
 """
 function ProxGrad_options(; verbose=1, max_iter=1000, opt_tol=1e-4, ftol=1e-4, max_time=3600.0, print_interval=10, stop_criteria=:proxgrad, store_trace=false, mu=1.0)
-    if stop_criteria ∉ [:condg, :proxgrad, :dfreemo]
+    if stop_criteria ∉ [:condg, :proxgrad, :dfpm]
         error("The stop criteria is not supported: $stop_criteria")
     end
     return ProxGradParams(verbose, max_iter, opt_tol, ftol, max_time, print_interval, stop_criteria, store_trace, mu)
@@ -139,11 +139,11 @@ function ProxGrad(evalf::Function, evalJf::Function, A::Vector{<:AbstractMatrix{
                 result.message = "The solution was found"
             end
             return theta, p
-        elseif method == :dfreemo
-            theta, p, success, message = subproblem_dfreemo(x, JF, h, SubProbParams)
+        elseif method == :dfpm
+            theta, p, success, message = subproblem_dfpm(x, JF, h, SubProbParams)
             if !success
                 result.success = false
-                result.message = "The subproblem of DFreeMO failed: " * message
+                result.message = "The subproblem of DFPM failed: " * message
             elseif abs(theta) <= 1e-15
                 result.success = true
                 result.message = "The solution was found"
@@ -278,8 +278,8 @@ function _ProxGrad_optimize!(result::OptimResult, f!::Function, Jf!::Function, h
                     result.message = "The solution was found using |θ_ProxGrad| <= $(options.opt_tol)"
                     break
                 end
-            elseif options.stop_criteria == :dfreemo &&  result.abs_theta <= options.opt_tol
-                result.message = "The solution was found using |θ_DFreeMO| <= $(options.opt_tol)"
+            elseif options.stop_criteria == :dfpm &&  result.abs_theta <= options.opt_tol
+                result.message = "The solution was found using |θ_DFPM| <= $(options.opt_tol)"
                 break
             end
         end

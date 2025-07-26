@@ -1,4 +1,4 @@
-mutable struct DFreeMOParams{T<:AbstractFloat}
+mutable struct DFPMParams{T<:AbstractFloat}
     verbose::Integer # Verbose level
     max_iter::Integer # Maximum number of iterations
     opt_tol::T # Optimality tolerance
@@ -16,7 +16,7 @@ end
 
 
 """	
-    DFreeMO_options(; verbose::Integer = 1, max_iter::Integer = 1000, opt_tol::T = 1e-4, ftol::T = 1e-4, max_time::T = 3600.0, print_interval::Integer = 10, store_trace::Bool = false, epsilon::T = 1e-10, sigma::T = 1.0, alpha::T = 0.1, max_subproblem_iter::Integer = 200)
+    DFPM_options(; verbose::Integer = 1, max_iter::Integer = 1000, opt_tol::T = 1e-4, ftol::T = 1e-4, max_time::T = 3600.0, print_interval::Integer = 10, store_trace::Bool = false, epsilon::T = 1e-10, sigma::T = 1.0, alpha::T = 0.1, max_subproblem_iter::Integer = 200)
 
 # Arguments:
 # - `verbose::Integer = 1`: Verbose level (0: none, 1: normal, 2: detailed)
@@ -25,37 +25,37 @@ end
 # - `ftol::T = 1e-4`: Function tolerance
 # - `max_time::T = 3600.0`: Maximum time in seconds
 # - `print_interval::Integer = 10`: Print interval
-# - `stop_criteria::Symbol = :dfreemo`:  Additional stop criteria (:condg, :proxgrad, :dfreemo)
+# - `stop_criteria::Symbol = :dfpm`:  Additional stop criteria (:condg, :proxgrad, :dfpm)
 # - `store_trace::Bool = false`: Whether to store the trace of x during optimization
 # - `epsilon::T = 1e-10`: Epsilon parameter for finite differences
 # - `sigma::T = 1.0`: Sigma parameter for regularization
 # - `alpha::T = 0.1`: Alpha parameter for sufficient decrease
 # - `max_subproblem_iter::Integer = 200`: Maximum subproblem iterations
 """
-function DFreeMO_options(; verbose=1, max_iter=1000, opt_tol=1e-4, ftol=1e-4, max_time=3600.0, print_interval=10, stop_criteria=:dfreemo, store_trace=false, epsilon=1e-10, sigma=1.0, alpha=0.1, max_subproblem_iter=200, lambda_min=1e-12)
-    if stop_criteria ∉ [:condg, :proxgrad, :dfreemo]
+function DFPM_options(; verbose=1, max_iter=1000, opt_tol=1e-4, ftol=1e-4, max_time=3600.0, print_interval=10, stop_criteria=:dfpm, store_trace=false, epsilon=1e-10, sigma=1.0, alpha=0.1, max_subproblem_iter=200, lambda_min=1e-12)
+    if stop_criteria ∉ [:condg, :proxgrad, :dfpm]
         error("The stop criteria is not supported: $stop_criteria")
     end
-    return DFreeMOParams(verbose, max_iter, opt_tol, ftol, max_time, print_interval, stop_criteria, store_trace, epsilon, sigma, alpha, max_subproblem_iter, lambda_min)
+    return DFPMParams(verbose, max_iter, opt_tol, ftol, max_time, print_interval, stop_criteria, store_trace, epsilon, sigma, alpha, max_subproblem_iter, lambda_min)
 end
 
 """
-    DFreeMO(evalf::Function, A::Vector{<:AbstractMatrix{T}}, delta::T, x0::AbstractVector{T}, options::DFreeMOParams=DFreeMO_options(); evalJf::Union{Nothing,Function}=nothing, lb::Union{Nothing,AbstractVector{T},Number}=nothing, ub::Union{Nothing,AbstractVector{T},Number}=nothing, callback=noop_callback) where {T<:AbstractFloat}
+    DFPM(evalf::Function, A::Vector{<:AbstractMatrix{T}}, delta::T, x0::AbstractVector{T}, options::DFPMParams=DFPM_options(); evalJf::Union{Nothing,Function}=nothing, lb::Union{Nothing,AbstractVector{T},Number}=nothing, ub::Union{Nothing,AbstractVector{T},Number}=nothing, callback=noop_callback) where {T<:AbstractFloat}
 
 # Arguments:
 # - `evalf::Function`: Function to evaluate the objective function f(x): R^n -> R^m
 # - `A::Vector{<:AbstractMatrix{T}}`: Vector of matrices A for each objective
 # - `delta::T`: Uncertainty parameter
 # - `x0::AbstractVector{T}`: Initial guess
-# - `options::DFreeMOParams=DFreeMO_options()`: Options for the DFreeMO solver
+# - `options::DFPMParams=DFPM_options()`: Options for the DFPM solver
 # - `evalJf::Union{Nothing,Function}=nothing`: Function to evaluate the Jacobian of the objective function Jf(x): R^n -> R^{m×n} (optional, uses finite differences if not provided)
 # - `lb::Union{Nothing,AbstractVector{T},Number}=nothing`: Lower bounds
 # - `ub::Union{Nothing,AbstractVector{T},Number}=nothing`: Upper bounds
 # - `callback::Function=noop_callback`: Optional hook executed every iteration, with signature `callback(iter, result) -> Bool`. Return `true` to stop; any other value continues. Use for logging or custom stopping rules.
 """
 
-function DFreeMO(evalf::Function, A::Vector{<:AbstractMatrix{T}}, delta::T, 
-    x0::AbstractVector{T}, options::DFreeMOParams=DFreeMO_options(); 
+function DFPM(evalf::Function, A::Vector{<:AbstractMatrix{T}}, delta::T, 
+    x0::AbstractVector{T}, options::DFPMParams=DFPM_options(); 
     evalJf::Union{Nothing,Function}=nothing,
     lb::Union{Nothing,AbstractVector{T},Number}=nothing, 
     ub::Union{Nothing,AbstractVector{T},Number}=nothing,
@@ -153,12 +153,12 @@ function DFreeMO(evalf::Function, A::Vector{<:AbstractMatrix{T}}, delta::T,
                 result.message = "The solution was found"
             end
             return theta, p
-        elseif method == :dfreemo
-            theta, p, success, message = subproblem_dfreemo(x, JF, h, SubProbParams; sigma=sigma, B=B)
+        elseif method == :dfpm
+            theta, p, success, message = subproblem_dfpm(x, JF, h, SubProbParams; sigma=sigma, B=B)
             # TODO: MOVER ESSA MUDANCA DE SUCCESS DIRETAMENTE PARA O SOLVER
             if !success
                 result.success = false
-                result.message = "The subproblem of DFreeMO failed: " * message
+                result.message = "The subproblem of DFPM failed: " * message
             elseif abs(theta) <= 1e-15
                 result.success = true # QUESTION: If the struct result is initialized with success = true, why is it necessary to set it to true again?
                 result.message = "The solution was found"
@@ -169,17 +169,17 @@ function DFreeMO(evalf::Function, A::Vector{<:AbstractMatrix{T}}, delta::T,
         end
     end
 
-    _DFreeMO_optimize!(result, f!, Jf!, h!, m, subproblem, options, callback)
+    _DFPM_optimize!(result, f!, Jf!, h!, m, subproblem, options, callback)
     result.total_time = time() - start_time
     return result
 end
 
 """
-    _DFreeMO_optimize!(f!, Jf!, h!, x0, options, callback, result)
+    _DFPM_optimize!(f!, Jf!, h!, x0, options, callback, result)
 
-Função interna que implementa o algoritmo DFreeMO.
+Função interna que implementa o algoritmo DFPM.
 """
-function _DFreeMO_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::Function, m::Int, subproblem::Function, options::DFreeMOParams, callback::Function)
+function _DFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::Function, m::Int, subproblem::Function, options::DFPMParams, callback::Function)
     
     # Initialize optimization
     x = copy(result.x)
@@ -235,7 +235,7 @@ function _DFreeMO_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!
     
     if options.verbose > 0
         @info "----------------------------------------------------------------------"
-        @info "Derivative-Free Method for Composite Multiojective Optimization"
+        @info "Derivative-Free Proximal Method for Composite Multiojective Optimization"
         @info "----------------------------------------------------------------------"
         @info "N of variables=$(n), N of objectives=$(m), Opt tol=$(options.opt_tol), Max iter=$(options.max_iter)"
         @info "Epsilon=$(options.epsilon), Sigma=$(sigma), Alpha=$(options.alpha)"
@@ -267,7 +267,7 @@ function _DFreeMO_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!
         F_prev = copy(result.Fval)
         
         for sub_iter in 1:options.max_subproblem_iter
-            theta, p = subproblem(x, JF, h, :dfreemo; sigma=sigma, B=B)
+            theta, p = subproblem(x, JF, h, :dfpm; sigma=sigma, B=B)
             result.subproblem_time += time() - start_subproblem_time
             
             # WARNING: This is not in the original paper
@@ -362,8 +362,8 @@ function _DFreeMO_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!
                     result.message = "The solution was found using |θ_ProxGrad| <= $(options.opt_tol)"
                     break
                 end
-            elseif options.stop_criteria == :dfreemo &&  result.abs_theta <= options.opt_tol
-                result.message = "The solution was found using |θ_DFreeMO| <= $(options.opt_tol)"
+            elseif options.stop_criteria == :dfpm &&  result.abs_theta <= options.opt_tol
+                result.message = "The solution was found using |θ_DFPM| <= $(options.opt_tol)"
                 break
             end
         end
