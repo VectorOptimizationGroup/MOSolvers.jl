@@ -270,12 +270,17 @@ function _DFreeMO_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!
             theta, p = subproblem(x, JF, h, :dfreemo; sigma=sigma, B=B)
             result.subproblem_time += time() - start_subproblem_time
             
+            # WARNING: This is not in the original paper
             # Se o subproblema falhou, multiplica sigma por 2 e continua
-            if !result.success || !isfinite(theta) || any(x -> !isfinite(x), p)
-                sigma = sigma * 2
-                # Reset success flag to allow retry
-                result.success = true
-                continue
+            # if !result.success || !isfinite(theta) || any(x -> !isfinite(x), p)
+            #     sigma = sigma * 2
+            #     # Reset success flag to allow retry
+            #     result.success = true
+            #     continue
+            # end
+
+            if !result.success
+                break
             end
 
             result.abs_theta = abs(theta)
@@ -320,6 +325,11 @@ function _DFreeMO_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!
                 break
             else
                 sigma = sigma * 2
+                # Update lambda
+                scale = options.epsilon / (sigma*sqrt(n))
+                lambda = ifelse(isfinite(scale) && scale > 0, max(scale * rand(T), options.lambda_min), options.lambda_min)
+                Jf!(JF, x; lambda=lambda)
+                # QUESTION: If the gradient is improved, why not use it to update the B matrices?
             end
 
             if sub_iter >= options.max_subproblem_iter
