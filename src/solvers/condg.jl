@@ -271,18 +271,21 @@ function _CondG_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::
         # Stopping criteria
         # Test optimality
         if norm_progress <= options.opt_tol
-            if options.stop_criteria == :condg && abs(theta) <= options.opt_tol
-                break
+            if options.stop_criteria == :condg
+                theta, p = subproblem(x, JF, h, :condg)
+                if !result.success || abs(theta) <= options.opt_tol
+                    result.message = "The solution was found using |θ_CondG| <= $(options.opt_tol)"
+                    break
+                end
             elseif options.stop_criteria == :proxgrad
                 theta, p = subproblem(x, JF, h, :proxgrad)
                 if !result.success || abs(theta) <= options.opt_tol
+                    result.message = "The solution was found using |θ_ProxGrad| <= $(options.opt_tol)"
                     break
                 end
-            elseif options.stop_criteria == :dfreemo
-                theta, p = subproblem(x, JF, h, :dfreemo)
-                if !result.success || abs(theta) <= options.opt_tol
-                    break
-                end
+            elseif options.stop_criteria == :dfreemo &&  result.abs_theta <= options.opt_tol
+                result.message = "The solution was found using |θ_DFreeMO| <= $(options.opt_tol)"
+                break
             end
         end
 

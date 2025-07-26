@@ -269,15 +269,18 @@ function _ProxGrad_optimize!(result::OptimResult, f!::Function, Jf!::Function, h
             if options.stop_criteria == :condg
                 theta, p = subproblem(x, JF, h, :condg)
                 if !result.success || abs(theta) <= options.opt_tol
+                    result.message = "The solution was found using |θ_CondG| <= $(options.opt_tol)"
                     break
                 end
-            elseif options.stop_criteria == :proxgrad && abs(theta) <= options.opt_tol
-                break
-            elseif options.stop_criteria == :dfreemo
-                theta, p = subproblem(x, JF, h, :dfreemo)
+            elseif options.stop_criteria == :proxgrad
+                theta, p = subproblem(x, JF, h, :proxgrad)
                 if !result.success || abs(theta) <= options.opt_tol
+                    result.message = "The solution was found using |θ_ProxGrad| <= $(options.opt_tol)"
                     break
                 end
+            elseif options.stop_criteria == :dfreemo &&  result.abs_theta <= options.opt_tol
+                result.message = "The solution was found using |θ_DFreeMO| <= $(options.opt_tol)"
+                break
             end
         end
 
