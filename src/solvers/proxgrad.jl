@@ -87,8 +87,7 @@ function ProxGrad(evalf::Function, evalJf::Function, A::Vector{<:AbstractMatrix{
     SubProbParams = SubProblemParams(A2n, b2n, lb_vec, ub_vec)
 
     # Create result structure
-    Fval = zeros(T, m)
-    result = OptimResult(x0, Fval)
+    result = OptimResult(x0, zeros(T, m))
 
     function f!(f, x)
         result.n_f_evals += 1
@@ -228,6 +227,9 @@ function _ProxGrad_optimize!(result::OptimResult, f!::Function, Jf!::Function, h
         end
         
         result.Fval .= Fx + h
+        if iter == 1
+            result.F_init .= result.Fval
+        end
 
         # Solve the subproblem
         start_subproblem_time = time()

@@ -1,18 +1,31 @@
 """
-    OptimResult
+    OptimResult{T<:AbstractFloat}
 
-Estrutura que armazena os resultados de um solver de otimização.
+Container structure holding the results produced by an optimization solver.
 
-# Campos
-- `x::Vector{Float64}`: ponto final encontrado
-- `n_f_evals::Int`: número de avaliações de função
-- `n_Jf_evals::Int`: número de avaliações de jacobiana
-- `success::Bool`: indicador de sucesso
-- `message::String`: mensagem descritiva do resultado
+# Fields
+- `x::Vector{T}`: Final iterate returned by the solver.
+- `Fval::Vector{T}`: Value of the composite objective `F(x)` at `x`.
+- `x_init::Vector{T}`: Initial point provided to the solver.
+- `F_init::Vector{T}`: Value of the composite objective at `x_init`.
+- `iter::Int`: Number of iterations performed.
+- `abs_theta::T`: Absolute value of the optimality measure θ at the last iterate.
+- `norm_progress::T`: Normalised ∞-norm progress between consecutive iterates.
+- `n_f_evals::Int`: Number of objective evaluations (`f!`).
+- `n_Jf_evals::Int`: Number of Jacobian evaluations (`Jf!`).
+- `total_time::Float64`: Total wall-clock time spent by the solver (seconds).
+- `subproblem_time::Float64`: Cumulative time spent solving sub-problems (seconds).
+- `x_trace::Vector{Vector{T}}`: History of iterates (populated when `store_trace=true`).
+- `abs_theta_trace::Vector{T}`: History of `abs_theta` values when tracing is enabled.
+- `norm_progress_trace::Vector{T}`: History of `norm_progress` values when tracing is enabled.
+- `success::Bool`: `true` if the solver terminated successfully, `false` otherwise.
+- `message::String`: Human-readable termination or error message.
 """
 mutable struct OptimResult{T<:AbstractFloat}
-    x::Vector{T}
-    Fval::Vector{T}
+    x::Vector{T}                 # current point
+    Fval::Vector{T}              # current F(x)
+    x_init::Vector{T}            # initial point
+    F_init::Vector{T}            # F(x_init)
     iter::Int
     abs_theta::T
     norm_progress::T
@@ -29,19 +42,21 @@ end
 
 function OptimResult(x0::AbstractVector{T}, Fval::AbstractVector{T}) where {T<:AbstractFloat}
     return OptimResult{T}(
-        copy(x0),
-        copy(Fval),
-        0,                        # iter
-        T(Inf),                   # abs_theta
-        T(Inf),                   # norm_progress
-        0,                        # n_f_evals
-        0,                        # n_Jf_evals
-        0,                        # total_time
-        0,                        # subproblem_time
-        Vector{Vector{T}}(),      # x_trace
-        T[],                      # abs_theta_trace
-        T[],                      # norm_progress_trace
-        true,                     # success
+        copy(x0),               # x
+        copy(Fval),             # Fval
+        copy(x0),               # x_init
+        copy(Fval),             # F_init
+        0,                      # iter
+        T(Inf),                 # abs_theta
+        T(Inf),                 # norm_progress
+        0,                      # n_f_evals
+        0,                      # n_Jf_evals
+        0.0,                      # total_time
+        0.0,                      # subproblem_time
+        Vector{Vector{T}}(),    # x_trace
+        T[],                    # abs_theta_trace
+        T[],                    # norm_progress_trace
+        true,                   # success
         "Optimization not started")  # message
 end
 
