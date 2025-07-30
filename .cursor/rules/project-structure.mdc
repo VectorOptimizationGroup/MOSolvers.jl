@@ -1,0 +1,14 @@
+---
+alwaysApply: true
+---
+## Project Structure
+```
+MOSolvers.jl/
+├── src/
+│   ├── MOSolvers.jl           # Package entry point
+│   ├── solvers/               # High-level algorithms (DFPM, CondG, …)
+│   ├── subproblems/           # Low-level convex subproblem routines
+│   └── utils/                 # Shared helpers (finite differences, line search,…)
+├── test/                      # Unit & regression tests
+└── docs/                      # User & developer documentation (Documenter.jl)
+```

@@ -86,16 +86,14 @@ function subproblem_condg(x::AbstractVector{T}, Jf::AbstractMatrix{T}, h::Abstra
         return convert(T, NaN), fill(convert(T, NaN), n), false, "Invalid input parameters"
     end
     
-    if minimum(h) != 0.0
-        # Validate constraint matrices with numerical stability checks
-        for (j, Aj) in enumerate(SubProbParams.A)
-            if any(!isfinite, Aj)
-                return convert(T, NaN), fill(convert(T, NaN), n), false, "Invalid A matrix at index $j"
-            end
-            # Check for rank deficiency which could indicate redundant constraints
-            if rank(Aj) < min(size(Aj)...)
-                @warn "Constraint matrix A[$j] may be rank deficient - this could indicate redundant constraints"
-            end
+    # Validate constraint matrices with numerical stability checks
+    for (j, Aj) in enumerate(SubProbParams.A)
+        if any(!isfinite, Aj)
+            return convert(T, NaN), fill(convert(T, NaN), n), false, "Invalid A matrix at index $j"
+        end
+        # Check for rank deficiency which could indicate redundant constraints
+        if rank(Aj) < min(size(Aj)...)
+            @warn "Constraint matrix A[$j] may be rank deficient - this could indicate redundant constraints"
         end
     end
 
@@ -174,65 +172,58 @@ function subproblem_condg(x::AbstractVector{T}, Jf::AbstractMatrix{T}, h::Abstra
     # Define objective function
     @objective(model, Min, tau)
 
-    if minimum(h) != 0.0
-        # Create variables w_j with enhanced bounds management
-        w = Dict()
+    # Create variables w_j with enhanced bounds management
+    w = Dict()
         
-        # # Use adaptive bounds for w variables to prevent numerical issues
-        # w_bound = T(1e6) * max(one(T), maximum(abs, h))
-        # for j in 1:m
-        #     w[j] = @variable(model, [1:size(SubProbParams.A[j], 1)], 
-        #                    lower_bound=0, upper_bound=w_bound)
-        # end
-        for j in 1:m
-            w[j] = @variable(model, [1:size(SubProbParams.A[j], 1)], lower_bound=0)
-        end
+    # # Use adaptive bounds for w variables to prevent numerical issues
+    # w_bound = T(1e6) * max(one(T), maximum(abs, h))
+    # for j in 1:m
+    #     w[j] = @variable(model, [1:size(SubProbParams.A[j], 1)], 
+    #                    lower_bound=0, upper_bound=w_bound)
+    # end
+    
+    for j in 1:m
 
-        # Enhanced constraint formulation with numerical stability considerations
-        for j in 1:m
-            @constraint(model, 
-                dot(SubProbParams.b[j], w[j]) - h[j] + dot(Jf[j,:], d) <= tau)
-            
-            # Optimized constraint generation with sparsity awareness
-            A_j = SubProbParams.A[j]
-            for i in axes(A_j, 2)
-                # Build constraint expressions efficiently based on matrix sparsity
-                expr = AffExpr()
-                
-                if issparse(A_j)
-                    # For sparse matrices, iterate only over non-zero elements
-                    for k in nzrange(A_j, i)
-                        row_idx = rowvals(A_j)[k]
-                        value = nonzeros(A_j)[k]
-                        expr += value * w[j][row_idx]
-                    end
-                else
-                    # For dense matrices, skip explicit zeros for efficiency
-                    for r in axes(A_j, 1)
-                        if !iszero(A_j[r, i])
-                            expr += A_j[r, i] * w[j][r]
-                        end
-                    end
-                end
-                
-                # Add the constraint with proper handling of degenerate cases
-                if iszero(expr)
-                    # If the expression is zero, u[i] must be zero
-                    @constraint(model, u[i] == 0.0)
-                else
-                    # Standard case: the linear combination of w variables equals u[i]
-                    @constraint(model, expr == u[i]) # A_j^T w_j = u
-                end
-            end
-        end
+        w[j] = @variable(model, [1:size(SubProbParams.A[j], 1)], lower_bound=0)
 
-    else
-        # Simplified case when h is zero - this represents unconstrained linearized subproblems
-        for j in 1:m
-            # Each linearized objective function constraint uses auxiliary variables for clarity
+        if minimum(h) != 0.0
+            @constraint(model, dot(SubProbParams.b[j], w[j]) - h[j] + dot(Jf[j,:], d) <= tau)
+        else
             @constraint(model, dot(Jf[j,:], d) <= tau)
         end
-    end  
+
+        # Optimized constraint generation with sparsity awareness
+        A_j = SubProbParams.A[j]
+        for i in axes(A_j, 2)
+            # Build constraint expressions efficiently based on matrix sparsity
+            expr = AffExpr()
+            
+            if issparse(A_j)
+                # For sparse matrices, iterate only over non-zero elements
+                for k in nzrange(A_j, i)
+                    row_idx = rowvals(A_j)[k]
+                    value = nonzeros(A_j)[k]
+                    expr += value * w[j][row_idx]
+                end
+            else
+                # For dense matrices, skip explicit zeros for efficiency
+                for r in axes(A_j, 1)
+                    if !iszero(A_j[r, i])
+                        expr += A_j[r, i] * w[j][r]
+                    end
+                end
+            end
+            
+            # Add the constraint with proper handling of degenerate cases
+            if iszero(expr)
+                # If the expression is zero, u[i] must be zero
+                @constraint(model, u[i] == 0.0)
+            else
+                # Standard case: the linear combination of w variables equals u[i]
+                @constraint(model, expr == u[i]) # A_j^T w_j = u
+            end
+        end
+    end
     
     # Solve the optimization problem
     optimize!(model)
