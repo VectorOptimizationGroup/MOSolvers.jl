@@ -11,12 +11,13 @@ mutable struct DFPMParams{T<:AbstractFloat}
     sigma::T # Sigma parameter for regularization
     alpha::T # Alpha parameter for sufficient decrease
     max_subproblem_iter::Integer # Maximum subproblem iterations
+    lambda_factor::Union{Function, T} # Percentage of the interval [0.0, ϵ / (σ*√n)] to be used as λ (λ = lambda_factor * ϵ / (σ*√n))
     lambda_min::T # Minimum lambda for finite differences
 end
 
 
 """	
-    DFPM_options(; verbose::Integer = 1, max_iter::Integer = 1000, opt_tol::T = 1e-4, ftol::T = 1e-4, max_time::T = 3600.0, print_interval::Integer = 10, store_trace::Bool = false, epsilon::T = 1e-10, sigma::T = 1.0, alpha::T = 0.1, max_subproblem_iter::Integer = 200)
+    DFPM_options(; verbose::Integer = 1, max_iter::Integer = 1000, opt_tol::T = 1e-4, ftol::T = 1e-4, max_time::T = 3600.0, print_interval::Integer = 10, store_trace::Bool = false, epsilon::T = 1e-10, sigma::T = 1.0, alpha::T = 0.1, max_subproblem_iter::Integer = 200, lambda_factor::T = 0.1, lambda_min::T = 1e-12)
 
 # Arguments:
 # - `verbose::Integer = 1`: Verbose level (0: none, 1: normal, 2: detailed)
@@ -31,12 +32,24 @@ end
 # - `sigma::T = 1.0`: Sigma parameter for regularization
 # - `alpha::T = 0.1`: Alpha parameter for sufficient decrease
 # - `max_subproblem_iter::Integer = 200`: Maximum subproblem iterations
+# - `lambda_factor::T = 0.1`: Percentage of the interval [0.0, ϵ / (σ*√n)] to be used as λ (λ = λ_factor * ϵ / (σ*√n))
+# - `lambda_min::T = 1e-12`: Minimum lambda for finite differences
 """
-function DFPM_options(; verbose=1, max_iter=1000, opt_tol=1e-4, ftol=1e-4, max_time=3600.0, print_interval=10, stop_criteria=:dfpm, store_trace=false, epsilon=1e-10, sigma=1.0, alpha=0.1, max_subproblem_iter=200, lambda_min=1e-12)
+function DFPM_options(; verbose=1, max_iter=1000, opt_tol=1e-4, ftol=1e-4, max_time=3600.0, print_interval=10, stop_criteria=:dfpm, store_trace=false, epsilon=1e-10, sigma=1.0, alpha=0.1, max_subproblem_iter=200, lambda_factor=0.1, lambda_min=1e-12)
     if stop_criteria ∉ [:condg, :proxgrad, :dfpm]
         error("The stop criteria is not supported: $stop_criteria")
     end
-    return DFPMParams(verbose, max_iter, opt_tol, ftol, max_time, print_interval, stop_criteria, store_trace, epsilon, sigma, alpha, max_subproblem_iter, lambda_min)
+
+    if lambda_factor isa Function
+        lambda_factor = lambda_factor()
+    end
+
+    if lambda_factor < 0 || lambda_factor > 1
+        @warn "The lambda factor is not in the interval [0, 1], using a random value"
+        lambda_factor = rand()
+    end
+
+    return DFPMParams(verbose, max_iter, opt_tol, ftol, max_time, print_interval, stop_criteria, store_trace, epsilon, sigma, alpha, max_subproblem_iter, lambda_factor, lambda_min)
 end
 
 """
@@ -196,10 +209,13 @@ function _DFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::F
     sigma = options.sigma
 
     # Initialize lambda
-    scale = options.epsilon / (options.sigma*sqrt(n))
+    sqrt_n = sqrt(n)
+    scale = options.epsilon / (options.sigma*sqrt_n)
+    lambda_factor_val = options.lambda_factor isa Function ? options.lambda_factor(; iter=0) : options.lambda_factor
+
     lambda = ifelse(
         isfinite(scale) && scale > 0,
-        max(scale * rand(T), options.lambda_min),
+        max(scale * lambda_factor_val, options.lambda_min),
         options.lambda_min
     )
 
@@ -371,10 +387,12 @@ function _DFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::F
         end
 
         # Update lambda
-        scale = options.epsilon / (sigma*sqrt(n))
+        scale = options.epsilon / (sigma*sqrt_n)
+        lambda_factor_val = options.lambda_factor isa Function ? options.lambda_factor(; iter=iter) : options.lambda_factor
+        
         lambda = ifelse(
             isfinite(scale) && scale > 0,
-            max(scale * rand(T), options.lambda_min),
+            max(scale * lambda_factor_val, options.lambda_min),
             options.lambda_min
         )
 
