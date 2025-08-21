@@ -8,7 +8,7 @@ MOSolvers.jl é uma biblioteca que fornece implementações de algoritmos para r
 
 - CondG: Método do Gradiente Condicional para MO
 - ProxGrad: Método do Gradiente Proximal para MO
-- DFPM: Método Livre de Derivadas Proximal para MO
+- PDFPM: Método Proximal Livre de Derivadas para MO
 
 ## Instalação
 
@@ -45,12 +45,12 @@ pareto_set = result.pareto_set
 - `solvers/`: Implementações de solvers
   - `condg.jl`: Solver CondG
   - `proxgrad.jl`: Solver ProxGrad
-  - `dfpm.jl`: Solver DFPM
+  - `pdfpm.jl`: Solver PDFPM
 
 - `subproblems/`: Implementações de subproblemas
   - `subproblem_condg.jl`: Subproblema para CondG
   - `subproblem_proxgrad.jl`: Subproblema para ProxGrad
-  - `subproblem_dfpm.jl`: Subproblema para DFPM
+  - `subproblem_pdfpm.jl`: Subproblema para PDFPM
 
 - `utils/`: Funções auxiliares
   - `armijo.jl`: Busca linear Armijo para MO

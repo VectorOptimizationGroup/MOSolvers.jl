@@ -1,4 +1,4 @@
-function subproblem_dfpm(x::AbstractVector{T}, Jf::AbstractMatrix{T}, h::AbstractVector{T}, 
+function subproblem_pdfpm(x::AbstractVector{T}, Jf::AbstractMatrix{T}, h::AbstractVector{T}, 
                            SubProbParams::SubProblemParams; 
                            sigma::T=1.0, 
                            B::Union{Nothing, Vector{<:AbstractMatrix{T}}}=nothing,

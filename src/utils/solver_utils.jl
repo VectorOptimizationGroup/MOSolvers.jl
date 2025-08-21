@@ -362,7 +362,7 @@ function check_subproblem_feasibility(x::AbstractVector{T}, SubProbParams::SubPr
 end
 
 # Optional: Helper function to create a solver cache
-function create_dfpm_cache(::Type{T}) where {T<:AbstractFloat}
+function create_pdfpm_cache(::Type{T}) where {T<:AbstractFloat}
     model = Model(Ipopt.Optimizer)
     return model
 end

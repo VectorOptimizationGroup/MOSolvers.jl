@@ -1,4 +1,4 @@
-mutable struct DFPMParams{T<:AbstractFloat}
+mutable struct PDFPMParams{T<:AbstractFloat}
     verbose::Integer # Verbose level
     max_iter::Integer # Maximum number of iterations
     opt_tol::T # Optimality tolerance
@@ -17,7 +17,7 @@ end
 
 
 """	
-    DFPM_options(; verbose::Integer = 1, max_iter::Integer = 1000, opt_tol::T = 1e-4, ftol::T = 1e-4, max_time::T = 3600.0, print_interval::Integer = 10, store_trace::Bool = false, epsilon::T = 1e-10, sigma::T = 1.0, alpha::T = 0.1, max_subproblem_iter::Integer = 200, lambda_factor::T = 0.1, lambda_min::T = 1e-12)
+    PDFPM_options(; verbose::Integer = 1, max_iter::Integer = 1000, opt_tol::T = 1e-4, ftol::T = 1e-4, max_time::T = 3600.0, print_interval::Integer = 10, store_trace::Bool = false, epsilon::T = 1e-10, sigma::T = 1.0, alpha::T = 0.1, max_subproblem_iter::Integer = 200, lambda_factor::T = 0.1, lambda_min::T = 1e-12)
 
 # Arguments:
 # - `verbose::Integer = 1`: Verbose level (0: none, 1: normal, 2: detailed)
@@ -26,7 +26,7 @@ end
 # - `ftol::T = 1e-4`: Function tolerance
 # - `max_time::T = 3600.0`: Maximum time in seconds
 # - `print_interval::Integer = 10`: Print interval
-# - `stop_criteria::Symbol = :dfpm`:  Additional stop criteria (:condg, :proxgrad, :dfpm)
+# - `stop_criteria::Symbol = :pdfpm`:  Additional stop criteria (:condg, :proxgrad, :pdfpm)
 # - `store_trace::Bool = false`: Whether to store the trace of x during optimization
 # - `epsilon::T = 1e-10`: Epsilon parameter for finite differences
 # - `sigma::T = 1.0`: Sigma parameter for regularization
@@ -35,8 +35,8 @@ end
 # - `lambda_factor::T = 0.1`: Percentage of the interval [0.0, ϵ / (σ*√n)] to be used as λ (λ = λ_factor * ϵ / (σ*√n))
 # - `lambda_min::T = 1e-12`: Minimum lambda for finite differences
 """
-function DFPM_options(; verbose=1, max_iter=1000, opt_tol=1e-4, ftol=1e-4, max_time=3600.0, print_interval=10, stop_criteria=:dfpm, store_trace=false, epsilon=1e-10, sigma=1.0, alpha=0.1, max_subproblem_iter=200, lambda_factor=0.1, lambda_min=1e-12)
-    if stop_criteria ∉ [:condg, :proxgrad, :dfpm]
+function PDFPM_options(; verbose=1, max_iter=1000, opt_tol=1e-4, ftol=1e-4, max_time=3600.0, print_interval=10, stop_criteria=:pdfpm, store_trace=false, epsilon=1e-10, sigma=1.0, alpha=0.1, max_subproblem_iter=200, lambda_factor=0.1, lambda_min=1e-12)
+    if stop_criteria ∉ [:condg, :proxgrad, :pdfpm]
         error("The stop criteria is not supported: $stop_criteria")
     end
 
@@ -49,26 +49,26 @@ function DFPM_options(; verbose=1, max_iter=1000, opt_tol=1e-4, ftol=1e-4, max_t
         lambda_factor = rand()
     end
 
-    return DFPMParams(verbose, max_iter, opt_tol, ftol, max_time, print_interval, stop_criteria, store_trace, epsilon, sigma, alpha, max_subproblem_iter, lambda_factor, lambda_min)
+    return PDFPMParams(verbose, max_iter, opt_tol, ftol, max_time, print_interval, stop_criteria, store_trace, epsilon, sigma, alpha, max_subproblem_iter, lambda_factor, lambda_min)
 end
 
 """
-    DFPM(evalf::Function, A::Vector{<:AbstractMatrix{T}}, delta::T, x0::AbstractVector{T}, options::DFPMParams=DFPM_options(); evalJf::Union{Nothing,Function}=nothing, lb::Union{Nothing,AbstractVector{T},Number}=nothing, ub::Union{Nothing,AbstractVector{T},Number}=nothing, callback=noop_callback) where {T<:AbstractFloat}
+    PDFPM(evalf::Function, A::Vector{<:AbstractMatrix{T}}, delta::T, x0::AbstractVector{T}, options::PDFPMParams=PDFPM_options(); evalJf::Union{Nothing,Function}=nothing, lb::Union{Nothing,AbstractVector{T},Number}=nothing, ub::Union{Nothing,AbstractVector{T},Number}=nothing, callback=noop_callback) where {T<:AbstractFloat}
 
 # Arguments:
 # - `evalf::Function`: Function to evaluate the objective function f(x): R^n -> R^m
 # - `A::Vector{<:AbstractMatrix{T}}`: Vector of matrices A for each objective
 # - `delta::T`: Uncertainty parameter
 # - `x0::AbstractVector{T}`: Initial guess
-# - `options::DFPMParams=DFPM_options()`: Options for the DFPM solver
+# - `options::PDFPMParams=PDFPM_options()`: Options for the PDFPM solver
 # - `evalJf::Union{Nothing,Function}=nothing`: Function to evaluate the Jacobian of the objective function Jf(x): R^n -> R^{m×n} (optional, uses finite differences if not provided)
 # - `lb::Union{Nothing,AbstractVector{T},Number}=nothing`: Lower bounds
 # - `ub::Union{Nothing,AbstractVector{T},Number}=nothing`: Upper bounds
 # - `callback::Function=noop_callback`: Optional hook executed every iteration, with signature `callback(iter, result) -> Bool`. Return `true` to stop; any other value continues. Use for logging or custom stopping rules.
 """
 
-function DFPM(evalf::Function, A::Vector{<:AbstractMatrix{T}}, delta::T, 
-    x0::AbstractVector{T}, options::DFPMParams=DFPM_options(); 
+function PDFPM(evalf::Function, A::Vector{<:AbstractMatrix{T}}, delta::T, 
+    x0::AbstractVector{T}, options::PDFPMParams=PDFPM_options(); 
     evalJf::Union{Nothing,Function}=nothing,
     lb::Union{Nothing,AbstractVector{T},Number}=nothing, 
     ub::Union{Nothing,AbstractVector{T},Number}=nothing,
@@ -165,12 +165,12 @@ function DFPM(evalf::Function, A::Vector{<:AbstractMatrix{T}}, delta::T,
                 result.message = "The solution was found"
             end
             return theta, p
-        elseif method == :dfpm
-            theta, p, success, message = subproblem_dfpm(x, JF, h, SubProbParams; sigma=sigma, B=B)
+        elseif method == :pdfpm
+            theta, p, success, message = subproblem_pdfpm(x, JF, h, SubProbParams; sigma=sigma, B=B)
             # TODO: MOVER ESSA MUDANCA DE SUCCESS DIRETAMENTE PARA O SOLVER
             if !success
                 result.success = false
-                result.message = "The subproblem of DFPM failed: " * message
+                result.message = "The subproblem of PDFPM failed: " * message
             elseif abs(theta) <= 1e-15
                 result.success = true # QUESTION: If the struct result is initialized with success = true, why is it necessary to set it to true again?
                 result.message = "The solution was found"
@@ -181,17 +181,17 @@ function DFPM(evalf::Function, A::Vector{<:AbstractMatrix{T}}, delta::T,
         end
     end
 
-    _DFPM_optimize!(result, f!, Jf!, h!, m, subproblem, options, callback)
+    _PDFPM_optimize!(result, f!, Jf!, h!, m, subproblem, options, callback)
     result.total_time = time() - start_time
     return result
 end
 
 """
-    _DFPM_optimize!(f!, Jf!, h!, x0, options, callback, result)
+    _PDFPM_optimize!(f!, Jf!, h!, x0, options, callback, result)
 
-Função interna que implementa o algoritmo DFPM.
+Função interna que implementa o algoritmo PDFPM.
 """
-function _DFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::Function, m::Int, subproblem::Function, options::DFPMParams, callback::Function)
+function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::Function, m::Int, subproblem::Function, options::PDFPMParams, callback::Function)
     
     # Initialize optimization
     x = copy(result.x)
@@ -250,7 +250,7 @@ function _DFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::F
     
     if options.verbose > 0
         @info "----------------------------------------------------------------------"
-        @info "Derivative-Free Proximal Method for Composite Multiojective Optimization"
+        @info "A Partially Derivative-Free Proximal Method for Composite Multiojective Optimization in the Hölder Setting"
         @info "----------------------------------------------------------------------"
         @info "N of variables=$(n), N of objectives=$(m), Opt tol=$(options.opt_tol), Max iter=$(options.max_iter)"
         @info "Epsilon=$(options.epsilon), Sigma=$(sigma), Alpha=$(options.alpha)"
@@ -285,7 +285,7 @@ function _DFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::F
         F_prev = copy(result.Fval)
         
         for sub_iter in 1:options.max_subproblem_iter
-            theta, p = subproblem(x, JF, h, :dfpm; sigma=sigma, B=B)
+            theta, p = subproblem(x, JF, h, :pdfpm; sigma=sigma, B=B)
             result.subproblem_time += time() - start_subproblem_time
             
             # WARNING: This is not in the original paper
@@ -380,8 +380,8 @@ function _DFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::F
                     result.message = "The solution was found using |θ_ProxGrad| <= $(options.opt_tol)"
                     break
                 end
-            elseif options.stop_criteria == :dfpm &&  result.abs_theta <= options.opt_tol
-                result.message = "The solution was found using |θ_DFPM| <= $(options.opt_tol)"
+            elseif options.stop_criteria == :pdfpm && result.abs_theta <= options.opt_tol
+                result.message = "The solution was found using |θ_PDFPM| <= $(options.opt_tol)"
                 break
             end
         end

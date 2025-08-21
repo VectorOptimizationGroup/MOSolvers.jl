@@ -13,13 +13,13 @@ module MOSolvers
     # Incluir subproblemas
     include("subproblems/subproblem_condg.jl")
     include("subproblems/subproblem_proxgrad.jl")
-    include("subproblems/subproblem_dfpm.jl")
+    include("subproblems/subproblem_pdfpm.jl")
 
     # Incluir solvers
     include("solvers/condg.jl")
     include("solvers/proxgrad.jl")
-    include("solvers/dfpm.jl")
+    include("solvers/pdfpm.jl")
 
     # Exportar solvers
-    export CondG, CondG_options, ProxGrad, ProxGrad_options, DFPM, DFPM_options
+    export CondG, CondG_options, ProxGrad, ProxGrad_options, PDFPM, PDFPM_options
 end

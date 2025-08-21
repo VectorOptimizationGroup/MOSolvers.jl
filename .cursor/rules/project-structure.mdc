@@ -6,7 +6,7 @@ alwaysApply: true
 MOSolvers.jl/
 ├── src/
 │   ├── MOSolvers.jl           # Package entry point
-│   ├── solvers/               # High-level algorithms (DFPM, CondG, …)
+│   ├── solvers/               # High-level algorithms (PDFPM, CondG, …)
 │   ├── subproblems/           # Low-level convex subproblem routines
 │   └── utils/                 # Shared helpers (finite differences, line search,…)
 ├── test/                      # Unit & regression tests
