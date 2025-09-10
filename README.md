@@ -20,7 +20,6 @@ Pkg.add(url="https://github.com/seu-usuario/MOSolvers.jl")
 ## Uso Básico
 
 ```julia
-using MOProblems
 using MOSolvers
 
 # Criar um problema ZDT1 com 30 variáveis
