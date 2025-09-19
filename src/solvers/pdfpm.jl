@@ -116,6 +116,8 @@ function PDFPM(evalf::Function, A::Vector{<:AbstractMatrix{T}}, delta::T,
         return f
     end
 
+    Jf_is_anality = evalJf !== nothing
+
     # Criar função Jf! baseada em se evalJf foi fornecido ou não
     function Jf!(Jf, x; method=:central, lambda=sqrt(eps(T)))
         result.n_Jf_evals += 1
@@ -181,7 +183,7 @@ function PDFPM(evalf::Function, A::Vector{<:AbstractMatrix{T}}, delta::T,
         end
     end
 
-    _PDFPM_optimize!(result, f!, Jf!, h!, m, subproblem, options, callback)
+    _PDFPM_optimize!(result, f!, Jf!, Jf_is_anality, h!, m, subproblem, options, callback)
     result.total_time = time() - start_time
     return result
 end
@@ -191,7 +193,7 @@ end
 
 Função interna que implementa o algoritmo PDFPM.
 """
-function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::Function, m::Int, subproblem::Function, options::PDFPMParams, callback::Function)
+function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_is_anality::Bool, h!::Function, m::Int, subproblem::Function, options::PDFPMParams, callback::Function)
     
     # Initialize optimization
     x = copy(result.x)
@@ -250,7 +252,7 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::
     
     if options.verbose > 0
         @info "----------------------------------------------------------------------"
-        @info "A Partially Derivative-Free Proximal Method for Composite Multiojective Optimization in the Hölder Setting"
+        @info "A Partially Derivative-Free Proximal Method for Composite Multiojective \n Optimization in the Hölder Setting"
         @info "----------------------------------------------------------------------"
         @info "N of variables=$(n), N of objectives=$(m), Opt tol=$(options.opt_tol), Max iter=$(options.max_iter)"
         @info "Epsilon=$(options.epsilon), Sigma=$(sigma), Alpha=$(options.alpha)"
@@ -343,11 +345,13 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::
                 break
             else
                 sigma = sigma * 2
-                # Update lambda
-                scale = options.epsilon / (sigma*sqrt(n))
-                lambda = ifelse(isfinite(scale) && scale > 0, max(scale * rand(T), options.lambda_min), options.lambda_min)
-                Jf!(JF, x; lambda=lambda)
-                # QUESTION: If the gradient is improved, why not use it to update the B matrices?
+                if !Jf_is_anality
+                    # Update lambda
+                    scale = options.epsilon / (sigma*sqrt(n))
+                    lambda = ifelse(isfinite(scale) && scale > 0, max(scale * rand(T), options.lambda_min), options.lambda_min)
+                    Jf!(JF, x; lambda=lambda)
+                    # QUESTION: If the gradient is improved, why not use it to update the B matrices?
+                end
             end
 
             if sub_iter >= options.max_subproblem_iter
