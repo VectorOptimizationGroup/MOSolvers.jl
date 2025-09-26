@@ -115,7 +115,7 @@ function CondG(evalf::Function, evalJf::Function, A::Vector{<:AbstractMatrix{T}}
 
     function subproblem(x, JF, h, method::Symbol)
         if method == :condg
-            theta, p, success, message = subproblem_condg(x, JF, h, SubProbParams)
+            theta, p, success, message = subproblem_condg(x, JF, h, SubProbParams; verbose=options.verbose)
             if !success
                 result.success = false
                 result.message = "The subproblem of CondG failed: " * message #QUESTION: Porque * message?
@@ -125,7 +125,7 @@ function CondG(evalf::Function, evalJf::Function, A::Vector{<:AbstractMatrix{T}}
             end
             return theta, p
         elseif method == :proxgrad
-            theta, p, success, message = subproblem_proxgrad(x, JF, h, SubProbParams)
+            theta, p, success, message = subproblem_proxgrad(x, JF, h, SubProbParams; verbose=options.verbose)
             if !success
                 result.success = false
                 result.message = "The subproblem of ProxGrad failed: " * message
@@ -135,7 +135,7 @@ function CondG(evalf::Function, evalJf::Function, A::Vector{<:AbstractMatrix{T}}
             end
             return theta, p
         elseif method == :pdfpm
-            theta, p, success, message = subproblem_pdfpm(x, JF, h, SubProbParams)
+            theta, p, success, message = subproblem_pdfpm(x, JF, h, SubProbParams; verbose=options.verbose)
             if !success
                 result.success = false
                 result.message = "The subproblem of PDFPM failed: " * message
@@ -308,16 +308,6 @@ function _CondG_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::
     end
     
     return result
-end
-
-"""
-    noop_callback
-
-Callback padrão que não faz nada.
-"""
-function noop_callback(args...)
-    # Não faz nada
-    return nothing
 end
 
 

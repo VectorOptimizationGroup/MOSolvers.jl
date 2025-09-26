@@ -148,7 +148,7 @@ function PDFPM(evalf::Function, A::Vector{<:AbstractMatrix{T}}, delta::T,
 
     function subproblem(x, JF, h, method::Symbol; sigma::T=1.0, B::Union{Nothing, Vector{<:AbstractMatrix{T}}}=nothing)
         if method == :condg
-            theta, p, success, message = subproblem_condg(x, JF, h, SubProbParams)
+            theta, p, success, message = subproblem_condg(x, JF, h, SubProbParams; verbose=options.verbose)
             if !success
                 result.success = false
                 result.message = "The subproblem of CondG failed: " * message
@@ -158,7 +158,7 @@ function PDFPM(evalf::Function, A::Vector{<:AbstractMatrix{T}}, delta::T,
             end
             return theta, p
         elseif method == :proxgrad
-            theta, p, success, message = subproblem_proxgrad(x, JF, h, SubProbParams; sigma=sigma)
+            theta, p, success, message = subproblem_proxgrad(x, JF, h, SubProbParams; sigma=sigma, verbose=options.verbose)
             if !success
                 result.success = false
                 result.message = "The subproblem of ProxGrad failed: " * message
@@ -168,7 +168,7 @@ function PDFPM(evalf::Function, A::Vector{<:AbstractMatrix{T}}, delta::T,
             end
             return theta, p
         elseif method == :pdfpm
-            theta, p, success, message = subproblem_pdfpm(x, JF, h, SubProbParams; sigma=sigma, B=B)
+            theta, p, success, message = subproblem_pdfpm(x, JF, h, SubProbParams; sigma=sigma, B=B, verbose=options.verbose)
             # TODO: MOVER ESSA MUDANCA DE SUCCESS DIRETAMENTE PARA O SOLVER
             if !success
                 result.success = false
