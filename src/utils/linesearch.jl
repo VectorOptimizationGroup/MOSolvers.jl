@@ -98,7 +98,7 @@ function armijo(F::Function, x::AbstractVector{T}, d::AbstractVector{T}, Fx::Abs
 
     φ_grad_0 = [dot(Jfx[i,:], d) for i in 1:m]
 
-    if factor == nothing
+    if isnothing(factor)
         factor = maximum(φ_grad_0)
     end
 
@@ -186,6 +186,8 @@ function BacktrackMO!(result::LineSearchResult, φ::Function, φ_grad_0::Vector{
     
     if isempty(failed_indices)
         result.stp = α
+        result.F_final = φ_val
+        result.success = true
         result.message = "A step size that satisfies the Armijo condition was found"
         return result
     end
@@ -215,6 +217,7 @@ function BacktrackMO!(result::LineSearchResult, φ::Function, φ_grad_0::Vector{
         if isempty(failed_indices)
             result.stp = α
             result.F_final = φ_val
+            result.success = true
             result.message = "A step size that satisfies the Armijo condition was found"
             return result
         end
