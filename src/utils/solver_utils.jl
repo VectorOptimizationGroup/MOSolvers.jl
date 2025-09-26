@@ -366,3 +366,13 @@ function create_pdfpm_cache(::Type{T}) where {T<:AbstractFloat}
     model = Model(Ipopt.Optimizer)
     return model
 end
+
+"""
+    noop_callback
+
+Callback padrão que não faz nada.
+"""
+function noop_callback(args...)
+    # Não faz nada
+    return nothing
+end
