@@ -283,13 +283,15 @@ function subproblem_proxgrad(x::AbstractVector{T}, Jf::AbstractMatrix{T}, h::Abs
     # --- (Re)cria modelo ---
     model = solver_cache === nothing ? Model(Ipopt.Optimizer) : (empty!(solver_cache); solver_cache)
 
-    # Ipopt: simples e estável
+    # Verbosidade/tolerâncias/recursos (Ipopt)
     set_optimizer_attribute(model, "max_iter", max_iter)
-    set_optimizer_attribute(model, "max_cpu_time", float(max_time))
     set_optimizer_attribute(model, "tol", max(tol, 1e-14))
     set_optimizer_attribute(model, "constr_viol_tol", max(tol, 1e-14))
     set_optimizer_attribute(model, "acceptable_tol", max(10tol, 1e-12))
     set_optimizer_attribute(model, "print_level", verbose)
+    set_optimizer_attribute(model, "max_cpu_time", float(max_time))  # tempo em segundos
+
+    # Opções estáveis e simples
     set_optimizer_attribute(model, "nlp_scaling_method", "gradient-based")
     set_optimizer_attribute(model, "mu_strategy", "adaptive")
     set_optimizer_attribute(model, "honor_original_bounds", "yes")

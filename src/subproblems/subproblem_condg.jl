@@ -278,7 +278,7 @@ function subproblem_condg(x::AbstractVector{T}, Jf::AbstractMatrix{T}, h::Abstra
     model = solver_cache === nothing ? Model(HiGHS.Optimizer) : (empty!(solver_cache); solver_cache)
 
     # verbosidade
-    if verbose == 0
+    if verbose <= 2
         set_silent(model)
         set_optimizer_attribute(model, "output_flag", false)
         set_optimizer_attribute(model, "log_to_console", false)
