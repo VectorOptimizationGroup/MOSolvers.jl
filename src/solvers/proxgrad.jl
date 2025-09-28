@@ -21,12 +21,12 @@ end
 # - `ftol::T = 1e-4`: Function tolerance
 # - `max_time::T = 3600.0`: Maximum time in seconds
 # - `print_interval::Integer = 10`: Print interval
-# - `stop_criteria::Symbol = :proxgrad`:  Additional stop criteria (:condg, :proxgrad, :pdfpm)
+# - `stop_criteria::Symbol = :proxgrad`:  Additional stop criteria (:proxgrad, :NormProgress)
 # - `store_trace::Bool = false`: Whether to store the trace of x during optimization
 # - `mu::T = 1.0`: Proximal parameter
 """
 function ProxGrad_options(; verbose=1, max_iter=1000, opt_tol=1e-4, ftol=1e-4, max_time=3600.0, print_interval=10, stop_criteria=:proxgrad, store_trace=false, mu=1.0)
-    if stop_criteria ∉ [:condg, :proxgrad, :pdfpm]
+    if stop_criteria ∉ [:NormProgress, :proxgrad]
         error("The stop criteria is not supported: $stop_criteria")
     end
     return ProxGradParams(verbose, max_iter, opt_tol, ftol, max_time, print_interval, stop_criteria, store_trace, mu)
@@ -123,9 +123,9 @@ function ProxGrad(evalf::Function, evalJf::Function, A::Vector{<:AbstractMatrix{
             if !success
                 result.success = false
                 result.message = "The subproblem of CondG failed: " * message
-            elseif abs(theta) <= 1e-15
-                result.success = true
-                result.message = "The solution was found"
+            # elseif abs(theta) <= 1e-15
+            #     result.success = true
+            #     result.message = "The solution was found"
             end
             return theta, p
         elseif method == :proxgrad
@@ -133,9 +133,9 @@ function ProxGrad(evalf::Function, evalJf::Function, A::Vector{<:AbstractMatrix{
             if !success
                 result.success = false
                 result.message = "The subproblem of ProxGrad failed: " * message
-            elseif abs(theta) <= 1e-15
-                result.success = true
-                result.message = "The solution was found"
+            # elseif abs(theta) <= 1e-15
+            #     result.success = true
+            #     result.message = "The solution was found"
             end
             return theta, p
         elseif method == :pdfpm
@@ -143,9 +143,9 @@ function ProxGrad(evalf::Function, evalJf::Function, A::Vector{<:AbstractMatrix{
             if !success
                 result.success = false
                 result.message = "The subproblem of PDFPM failed: " * message
-            elseif abs(theta) <= 1e-15
-                result.success = true
-                result.message = "The solution was found"
+            # elseif abs(theta) <= 1e-15
+            #     result.success = true
+            #     result.message = "The solution was found"
             end
             return theta, p
         else
@@ -210,39 +210,45 @@ function _ProxGrad_optimize!(result::OptimResult, f!::Function, Jf!::Function, h
         @info "N of variables=$(n), N of objectives=$(m), Opt tol=$(options.opt_tol), Max iter=$(options.max_iter), mu=$(options.mu)"
     end
 
+    # Initial evaluation
+    f!(Fx, x)
+    Jf!(JF, x)
+    h!(h, x)
+
+    # Verificar se h! falhou
+    if !result.success
+        return result
+    end
+    
+    result.Fval .= Fx + h
+    result.F_init .= result.Fval
+
+    # Solve the subproblem
+    start_subproblem_time = time()
+    theta, p = subproblem(x, JF, h, :proxgrad)
+    result.subproblem_time += time() - start_subproblem_time
+    if !result.success
+        return result
+    end
+
+    result.abs_theta = abs(theta)
+
+    if options.verbose > 0
+        print_table(result)
+    end
+
+    # Stopping criteria
+    if result.abs_theta <= options.opt_tol
+        result.success = true
+        result.message = "Solution found at initial point with |θ_ProxGrad| ≤ $(options.opt_tol)"
+        return result
+    end
+
     for iter in 1:options.max_iter
         if time() - start_time >= options.max_time
             result.success = false
             result.message = "Maximum time reached $(options.max_time)"
             return result
-        end
-        # Compute F and JF
-        f!(Fx, x)
-        Jf!(JF, x)
-        h!(h, x)
-        
-        # Verificar se h! falhou
-        if !result.success
-            break
-        end
-        
-        result.Fval .= Fx + h
-        if iter == 1
-            result.F_init .= result.Fval
-        end
-
-        # Solve the subproblem
-        start_subproblem_time = time()
-        theta, p = subproblem(x, JF, h, :proxgrad)
-        result.subproblem_time += time() - start_subproblem_time
-        if !result.success
-            break
-        end
-
-        result.abs_theta = abs(theta)
-
-        if options.verbose > 0
-            print_table(result)
         end
 
         # Define the search direction
@@ -258,6 +264,7 @@ function _ProxGrad_optimize!(result::OptimResult, f!::Function, Jf!::Function, h
             break
         end
 
+        # Update x
         x = x + line_search_result.stp * d
 
         norm_progress = norm(x - result.x, Inf) / max(1, norm(result.x, Inf))
@@ -265,25 +272,37 @@ function _ProxGrad_optimize!(result::OptimResult, f!::Function, Jf!::Function, h
         # Update
         update!(result, x=x, norm_progress=norm_progress, iter=iter, store_trace=options.store_trace)
 
+        # Compute F and JF
+        f!(Fx, x)
+        Jf!(JF, x)
+        h = line_search_result.F_final - Fx #Reduz o custo de chamar h!
+        
+        result.Fval .= line_search_result.F_final
+
+        # Solve the subproblem
+        start_subproblem_time = time()
+        theta, p = subproblem(x, JF, h, :proxgrad)
+        result.subproblem_time += time() - start_subproblem_time
+        if !result.success
+            break
+        end
+
+        result.abs_theta = abs(theta)
+
+        if options.verbose > 0
+            print_table(result)
+        end
+
         # Stopping criteria
         # Test optimality
-        if norm_progress <= options.opt_tol
-            if options.stop_criteria == :condg
-                theta, p = subproblem(x, JF, h, :condg)
-                if !result.success || abs(theta) <= options.opt_tol
-                    result.message = "The solution was found using |θ_CondG| <= $(options.opt_tol)"
-                    break
-                end
-            elseif options.stop_criteria == :proxgrad
-                theta, p = subproblem(x, JF, h, :proxgrad)
-                if !result.success || abs(theta) <= options.opt_tol
-                    result.message = "The solution was found using |θ_ProxGrad| <= $(options.opt_tol)"
-                    break
-                end
-            elseif options.stop_criteria == :pdfpm &&  result.abs_theta <= options.opt_tol
-                result.message = "The solution was found using |θ_PDFPM| <= $(options.opt_tol)"
+        if options.stop_criteria == :NormProgress
+            if norm_progress <= options.opt_tol && result.abs_theta <= options.opt_tol 
+                result.message = "The solution was found using |θ_ProxGrad| <= $(options.opt_tol) and norm_progress <= $(options.opt_tol)"
                 break
             end
+        elseif result.abs_theta <= options.opt_tol
+            result.message = "The solution was found using |θ_ProxGrad| <= $(options.opt_tol)"
+            break
         end
 
         abort = callback(iter, result)

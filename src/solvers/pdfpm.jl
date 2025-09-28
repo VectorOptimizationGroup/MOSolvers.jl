@@ -36,7 +36,7 @@ end
 # - `lambda_min::T = 1e-12`: Minimum lambda for finite differences
 """
 function PDFPM_options(; verbose=1, max_iter=1000, opt_tol=1e-4, ftol=1e-4, max_time=3600.0, print_interval=10, stop_criteria=:pdfpm, store_trace=false, epsilon=1e-10, sigma=1.0, alpha=0.1, max_subproblem_iter=200, lambda_factor=0.1, lambda_min=1e-12)
-    if stop_criteria ∉ [:condg, :proxgrad, :pdfpm]
+    if stop_criteria ∉ [:pdfpm]
         error("The stop criteria is not supported: $stop_criteria")
     end
 
@@ -152,9 +152,9 @@ function PDFPM(evalf::Function, A::Vector{<:AbstractMatrix{T}}, delta::T,
             if !success
                 result.success = false
                 result.message = "The subproblem of CondG failed: " * message
-            elseif abs(theta) <= 1e-15
-                result.success = true
-                result.message = "The solution was found"
+            # elseif abs(theta) <= 1e-15
+            #     result.success = true
+            #     result.message = "The solution was found"
             end
             return theta, p
         elseif method == :proxgrad
@@ -162,9 +162,9 @@ function PDFPM(evalf::Function, A::Vector{<:AbstractMatrix{T}}, delta::T,
             if !success
                 result.success = false
                 result.message = "The subproblem of ProxGrad failed: " * message
-            elseif abs(theta) <= 1e-15
-                result.success = true
-                result.message = "The solution was found"
+            # elseif abs(theta) <= 1e-15
+            #     result.success = true
+            #     result.message = "The solution was found"
             end
             return theta, p
         elseif method == :pdfpm
@@ -173,9 +173,9 @@ function PDFPM(evalf::Function, A::Vector{<:AbstractMatrix{T}}, delta::T,
             if !success
                 result.success = false
                 result.message = "The subproblem of PDFPM failed: " * message
-            elseif abs(theta) <= 1e-15
-                result.success = true # QUESTION: If the struct result is initialized with success = true, why is it necessary to set it to true again?
-                result.message = "The solution was found"
+            # elseif abs(theta) <= 1e-15
+            #     result.success = true # QUESTION: If the struct result is initialized with success = true, why is it necessary to set it to true again?
+            #     result.message = "The solution was found"
             end
             return theta, p
         else
@@ -225,6 +225,7 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_i
     start_time = time()
 
     # Define the composite objective function F(x) = f(x) + h(x)
+    # TODO: Remover essa função não utilizada
     function F!(x; m::Int=m)
         Fx = zeros(T, m)
         h = zeros(T, m)
@@ -357,7 +358,11 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_i
             if sub_iter >= options.max_subproblem_iter
                 result.success = false
                 result.message = "Subproblem did not converge"
-                break
+                if !Jf_is_anality
+                    break
+                else
+                    return result
+                end
             end
         end
 
@@ -370,36 +375,41 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_i
         update!(result, x=x, norm_progress=norm_progress, iter=iter, store_trace=options.store_trace)
 
         # Stopping criteria
-        #TODO: This stop criteria need to be improved
-        if norm_progress <= options.opt_tol
-            if options.stop_criteria == :condg
-                theta, p = subproblem(x, JF, h, :condg)
-                if !result.success || abs(theta) <= options.opt_tol
-                    result.message = "The solution was found using |θ_CondG| <= $(options.opt_tol)"
-                    break
-                end
-            elseif options.stop_criteria == :proxgrad
-                theta, p = subproblem(x, JF, h, :proxgrad)
-                if !result.success || abs(theta) <= options.opt_tol
-                    result.message = "The solution was found using |θ_ProxGrad| <= $(options.opt_tol)"
-                    break
-                end
-            elseif options.stop_criteria == :pdfpm && result.abs_theta <= options.opt_tol
-                result.message = "The solution was found using |θ_PDFPM| <= $(options.opt_tol)"
-                break
-            end
+        if result.abs_theta <= options.opt_tol
+            result.message = "The solution was found using |θ_PDFPM| <= $(options.opt_tol)"
+            break
         end
+        #TODO: This stop criteria need to be improved
+        # if norm_progress <= options.opt_tol
+        #     if options.stop_criteria == :condg
+        #         theta, p = subproblem(x, JF, h, :condg)
+        #         if !result.success || abs(theta) <= options.opt_tol
+        #             result.message = "The solution was found using |θ_CondG| <= $(options.opt_tol)"
+        #             break
+        #         end
+        #     elseif options.stop_criteria == :proxgrad
+        #         theta, p = subproblem(x, JF, h, :proxgrad)
+        #         if !result.success || abs(theta) <= options.opt_tol
+        #             result.message = "The solution was found using |θ_ProxGrad| <= $(options.opt_tol)"
+        #             break
+        #         end
+        #     elseif options.stop_criteria == :pdfpm && result.abs_theta <= options.opt_tol
+        #         result.message = "The solution was found using |θ_PDFPM| <= $(options.opt_tol)"
+        #         break
+        #     end
+        # end
 
         # Update lambda
-        scale = options.epsilon / (sigma*sqrt_n)
-        lambda_factor_val = options.lambda_factor isa Function ? options.lambda_factor(; iter=iter) : options.lambda_factor
-        
-        lambda = ifelse(
-            isfinite(scale) && scale > 0,
-            max(scale * lambda_factor_val, options.lambda_min),
-            options.lambda_min
-        )
-
+        if !Jf_is_anality
+            scale = options.epsilon / (sigma*sqrt_n)
+            lambda_factor_val = options.lambda_factor isa Function ? options.lambda_factor(; iter=iter) : options.lambda_factor
+            
+            lambda = ifelse(
+                isfinite(scale) && scale > 0,
+                max(scale * lambda_factor_val, options.lambda_min),
+                options.lambda_min
+            )
+        end
         abort = callback(iter, result)
 
         # External interruption
