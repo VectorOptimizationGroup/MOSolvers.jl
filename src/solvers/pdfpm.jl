@@ -36,7 +36,7 @@ end
 # - `lambda_min::T = 1e-12`: Minimum lambda for finite differences
 """
 function PDFPM_options(; verbose=1, max_iter=1000, opt_tol=1e-4, ftol=1e-4, max_time=3600.0, print_interval=10, stop_criteria=:pdfpm, store_trace=false, epsilon=1e-10, sigma=1.0, alpha=0.1, max_subproblem_iter=200, lambda_factor=0.1, lambda_min=1e-12)
-    if stop_criteria ∉ [:pdfpm]
+    if stop_criteria ∉ [:pdfpm, :NormProgress]
         error("The stop criteria is not supported: $stop_criteria")
     end
 
@@ -203,6 +203,9 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_i
     Fx = zeros(T, m)
     JF = zeros(T, m, n)
     h = zeros(T, m)
+    h_prev = zeros(T, m)
+    #Initialize theta
+    theta = T(NaN)
 
     # Initialize B matrices as identity for each objective
     B = [Matrix{T}(I, n, n) for _ in 1:m]
@@ -225,30 +228,14 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_i
     start_time = time()
 
     # Define the composite objective function F(x) = f(x) + h(x)
-    # TODO: Remover essa função não utilizada
-    function F!(x; m::Int=m)
+    function F(x; m::Int=m)
         Fx = zeros(T, m)
         h = zeros(T, m)
+
+        f!(Fx, x)
+        h!(h, x)
         
-        # Usar try-catch para capturar qualquer erro durante a avaliação
-        try
-            f!(Fx, x)
-            h!(h, x)
-            
-            # Verificar se h! falhou
-            if !result.success
-                # Em vez de lançar erro, retornar um código especial
-                # que será verificado em armijo
-                return nothing, result.message
-            end
-            
-            return Fx + h, nothing
-        catch e
-            # Capturar qualquer outro erro que possa ocorrer
-            result.success = false
-            result.message = "Error evaluating F!: " * string(e)
-            return nothing, result.message
-        end
+        return Fx .+ h
     end
     
     if options.verbose > 0
@@ -259,6 +246,42 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_i
         @info "Epsilon=$(options.epsilon), Sigma=$(sigma), Alpha=$(options.alpha)"
     end
 
+    # Compute F and JF
+    f!(Fx, x)
+    Jf!(JF, x; lambda=lambda)
+    h!(h, x)
+
+    # Verificar se h! falhou
+    if !result.success
+        result.message = "h! failed"
+        return result
+    end
+
+    h_prev = copy(h)
+
+    # Solve the subproblem
+    start_subproblem_time = time()
+    theta, p = subproblem(x, JF, h, :pdfpm; sigma=sigma, B=B)
+    result.subproblem_time += time() - start_subproblem_time
+    if !result.success
+        return result
+    end
+
+    # Update result
+    update!(result, x=x, abs_theta=abs(theta), Fval=Fx + h, norm_progress=T(NaN), store_trace=options.store_trace)
+    result.F_init .= result.Fval
+
+    if options.verbose > 0
+        print_table(result)
+    end
+
+    # Stopping criteria
+    if result.abs_theta <= options.opt_tol
+        result.success = true
+        result.message = "Solution found at initial point with |θ_PDFPM| ≤ $(options.opt_tol)"
+        return result
+    end
+
     for iter in 1:options.max_iter
 
         if time() - start_time >= options.max_time
@@ -266,138 +289,82 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_i
             result.message = "Maximum time reached $(options.max_time)"
             return result
         end
-
-        # Compute F and JF
-        f!(Fx, x)
-        Jf!(JF, x; lambda=lambda)
-        h!(h, x)
-        
-        # Verificar se h! falhou
-        if !result.success
-            break
-        end
-        
-        result.Fval .= Fx + h
-        if iter == 1
-            result.F_init .= result.Fval
-        end
-
-        # Solve the subproblem with multiple iterations
-        start_subproblem_time = time()
-        x_prev = copy(x)
-        F_prev = copy(result.Fval)
         
         for sub_iter in 1:options.max_subproblem_iter
-            theta, p = subproblem(x, JF, h, :pdfpm; sigma=sigma, B=B)
-            result.subproblem_time += time() - start_subproblem_time
-            
-            # WARNING: This is not in the original paper
-            # Se o subproblema falhou, multiplica sigma por 2 e continua
-            # if !result.success || !isfinite(theta) || any(x -> !isfinite(x), p)
-            #     sigma = sigma * 2
-            #     # Reset success flag to allow retry
-            #     result.success = true
-            #     continue
-            # end
-
-            if !result.success
-                break
-            end
-
-            result.abs_theta = abs(theta)
-
             # Check convergence
             if sigma * norm(p - x) <= options.epsilon
-                x = p
-                if options.verbose > 0
-                    @info "Converged at iteration $iter with small tolerance"
-                end
+                x .= p
                 result.success = true
                 result.message = "Solution was found"
                 # Update result
                 norm_progress = norm(x - result.x, Inf) / max(1, norm(result.x, Inf))
-                update!(result, x=x, norm_progress=norm_progress, iter=iter, store_trace=options.store_trace)
+                # Compute F
+                Fx .= F(x)
+
+                # Verificar se h! falhou na avaliação de F
+                if !result.success
+                    return result
+                end
+                #  WARNING: abs_theta is not updated here.
+                update!(result, x=x, Fval=Fx, abs_theta=zero(T), norm_progress=norm_progress, iter=iter, store_trace=options.store_trace)
+                if options.verbose > 0
+                    print_table(result)
+                    @info "Converged at iteration $iter with small tolerance"
+                end
+
                 return result
             end
 
             # Check sufficient decrease
-            # TODO: Check if is possible not create F_new and h_new (high memorycost)
-            F_new = zeros(T, m)
-            h_new = zeros(T, m)
-            f!(F_new, p)
-            h!(h_new, p)
+            f!(Fx, p)
+            h!(h, p)
 
-            # Verificar se h! falhou
+            # Verificar se h! falhou na avaliação de F
             if !result.success
-                break
+                return result
             end
 
-            F_new .= F_new + h_new
-            
-            if all(F_new .<= F_prev .- (options.alpha * options.epsilon^2) / (2 * sigma))
-                # Update x and matrices
-                x_prev = copy(x)
-                x = p
-                JF_prev = copy(JF)
-                Jf!(JF, x; lambda=lambda)
-                
-                # Update B matrices using BFGS
-                BFGS_update!(B, n, m, x, x_prev, JF, JF_prev) # TODO: Check here if the B matrices is ill-conditioned
+            Fx .+= h
+
+            if all(Fx .<= result.Fval .- (options.alpha * options.epsilon^2) / (2 * sigma))
+                # Update x
+                x .= p
                 break
             else
+                if sub_iter >= options.max_subproblem_iter
+                    result.success = false
+                    result.message = "The maximum subiteration limit was reached"
+                    return result
+                end
                 sigma = sigma * 2
                 if !Jf_is_anality
                     # Update lambda
                     scale = options.epsilon / (sigma*sqrt(n))
                     lambda = ifelse(isfinite(scale) && scale > 0, max(scale * rand(T), options.lambda_min), options.lambda_min)
                     Jf!(JF, x; lambda=lambda)
-                    # QUESTION: If the gradient is improved, why not use it to update the B matrices?
                 end
             end
-
-            if sub_iter >= options.max_subproblem_iter
+            # Check maximum time
+            if time() - start_time >= options.max_time
                 result.success = false
-                result.message = "Subproblem did not converge"
-                if !Jf_is_anality
-                    break
-                else
-                    return result
-                end
+                result.message = "Maximum time reached $(options.max_time)"
+                return result
             end
-        end
+            # Solve the subproblem
+            start_subproblem_time = time()
+            theta, p = subproblem(x, JF, h_prev, :pdfpm; sigma=sigma, B=B)
+            result.subproblem_time += time() - start_subproblem_time
 
-        if options.verbose > 0
-            print_table(result)
+            if !result.success
+                return result
+            end
+            println("theta: ", theta)
+
+            # update!(result, abs_theta=abs(theta), store_trace=options.store_trace)
         end
 
         # Update result
         norm_progress = norm(x - result.x, Inf) / max(1, norm(result.x, Inf))
-        update!(result, x=x, norm_progress=norm_progress, iter=iter, store_trace=options.store_trace)
-
-        # Stopping criteria
-        if result.abs_theta <= options.opt_tol
-            result.message = "The solution was found using |θ_PDFPM| <= $(options.opt_tol)"
-            break
-        end
-        #TODO: This stop criteria need to be improved
-        # if norm_progress <= options.opt_tol
-        #     if options.stop_criteria == :condg
-        #         theta, p = subproblem(x, JF, h, :condg)
-        #         if !result.success || abs(theta) <= options.opt_tol
-        #             result.message = "The solution was found using |θ_CondG| <= $(options.opt_tol)"
-        #             break
-        #         end
-        #     elseif options.stop_criteria == :proxgrad
-        #         theta, p = subproblem(x, JF, h, :proxgrad)
-        #         if !result.success || abs(theta) <= options.opt_tol
-        #             result.message = "The solution was found using |θ_ProxGrad| <= $(options.opt_tol)"
-        #             break
-        #         end
-        #     elseif options.stop_criteria == :pdfpm && result.abs_theta <= options.opt_tol
-        #         result.message = "The solution was found using |θ_PDFPM| <= $(options.opt_tol)"
-        #         break
-        #     end
-        # end
 
         # Update lambda
         if !Jf_is_anality
@@ -410,6 +377,49 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_i
                 options.lambda_min
             )
         end
+
+        JF_prev = copy(JF)
+        Jf!(JF, x; lambda=lambda)
+        
+        # Update B matrices using BFGS
+        # BFGS_update!(B, n, m, x, result.x, JF, JF_prev) # TODO: Check here if the B matrices is ill-conditioned
+        bfgsupdate!(B, x, result.x, JF, JF_prev, theta)
+
+        # Solve the subproblem with multiple iterations
+        start_subproblem_time = time()
+        theta, p = subproblem(x, JF, h, :pdfpm; sigma=sigma, B=B)
+        result.subproblem_time += time() - start_subproblem_time
+        if !result.success
+            return result
+        end
+        update!(result, x=x, Fval=Fx, abs_theta=abs(theta), norm_progress=norm_progress, iter=iter, store_trace=options.store_trace)
+
+        if options.verbose > 0
+            print_table(result)
+        end
+
+        # Stopping criteria
+        # Test optimality
+        if options.stop_criteria == :NormProgress
+            if norm_progress <= options.opt_tol && result.abs_theta <= options.opt_tol 
+                result.message = "The solution was found using |θ_PDFPM| <= $(options.opt_tol) and norm_progress <= $(options.opt_tol)"
+                result.success = true
+                # update!(result, x=x, Fval=Fx, abs_theta=result.abs_theta, norm_progress=norm_progress, iter=iter, store_trace=options.store_trace)
+                # if options.verbose > 0
+                #     print_table(result)
+                # end
+                return result
+            end
+        elseif result.abs_theta <= options.opt_tol
+            result.message = "The solution was found using |θ_PDFPM| <= $(options.opt_tol)"
+            result.success = true
+            # update!(result, x=x, Fval=Fx, abs_theta=result.abs_theta, norm_progress=norm_progress, iter=iter, store_trace=options.store_trace)
+            # if options.verbose > 0
+            #    print_table(result)
+            # end
+            return result
+        end
+
         abort = callback(iter, result)
 
         # External interruption
