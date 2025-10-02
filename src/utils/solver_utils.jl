@@ -136,6 +136,87 @@ struct SubProblemParams{T<:AbstractFloat}
     end
 end
 
+# -----------------------------------------------------------------------------
+# Lightweight cache for evalh! models to avoid rebuilding HiGHS models every call
+# Keyed by the SubProblemParams instance (object identity). Each entry stores a
+# vector with (model, z) for each objective j.
+const _EVALH_MODEL_CACHE = IdDict{SubProblemParams, Vector{NamedTuple{(:model, :z), Tuple{Model, Vector{JuMP.VariableRef}}}}}()
+
+# Optional resource limits for HiGHS inside evalh!
+struct _HiGHSLimits
+    time_limit::Union{Nothing, Float64}
+    simplex_iteration_limit::Union{Nothing, Int}
+    ipm_iteration_limit::Union{Nothing, Int}
+    output_flag::Union{Nothing, Bool}
+end
+
+const _EVALH_LIMITS = Base.RefValue{_HiGHSLimits}(_HiGHSLimits(nothing, nothing, nothing, nothing))
+
+"""
+    set_evalh_highs_limits!(; time_limit=nothing, simplex_iteration_limit=nothing, ipm_iteration_limit=nothing, output_flag=nothing)
+
+Configure resource limits for HiGHS models used by `evalh!`.
+
+All arguments are optional. Pass `nothing` to keep unset.
+"""
+function set_evalh_highs_limits!(; time_limit::Union{Nothing, Real}=nothing,
+                                    simplex_iteration_limit::Union{Nothing, Integer}=nothing,
+                                    ipm_iteration_limit::Union{Nothing, Integer}=nothing,
+                                    output_flag::Union{Nothing, Bool}=nothing)
+    _EVALH_LIMITS[] = _HiGHSLimits(
+        time_limit === nothing ? nothing : Float64(time_limit),
+        simplex_iteration_limit === nothing ? nothing : Int(simplex_iteration_limit),
+        ipm_iteration_limit === nothing ? nothing : Int(ipm_iteration_limit),
+        output_flag,
+    )
+    return nothing
+end
+
+function _ensure_h_models!(SubProbParams::SubProblemParams{T}, n::Int) where {T<:AbstractFloat}
+    m = length(SubProbParams.A)
+    cached = get(_EVALH_MODEL_CACHE, SubProbParams, nothing)
+    # If missing or dimension mismatch, (re)build
+    if cached === nothing || length(cached) != m || length(cached[1].z) != n
+        models = Vector{NamedTuple{(:model, :z), Tuple{Model, Vector{JuMP.VariableRef}}}}(undef, m)
+        for j in 1:m
+            model = Model(HiGHS.Optimizer)
+            set_silent(model)
+            # Apply current resource limits (if any)
+            lim = _EVALH_LIMITS[]
+            if lim.time_limit !== nothing
+                set_optimizer_attribute(model, "time_limit", lim.time_limit)
+            end
+            if lim.simplex_iteration_limit !== nothing
+                set_optimizer_attribute(model, "simplex_iteration_limit", lim.simplex_iteration_limit)
+            end
+            if lim.ipm_iteration_limit !== nothing
+                set_optimizer_attribute(model, "ipm_iteration_limit", lim.ipm_iteration_limit)
+            end
+            if lim.output_flag !== nothing
+                set_optimizer_attribute(model, "output_flag", lim.output_flag)
+            end
+            @variable(model, z[1:n])
+            @constraint(model, SubProbParams.A[j] * z .<= SubProbParams.b[j])
+            models[j] = (model=model, z=z)
+        end
+        _EVALH_MODEL_CACHE[SubProbParams] = models
+        return models
+    else
+        return cached
+    end
+end
+
+"""
+    clear_evalh_cache!()
+
+Clear the cached HiGHS models used by `evalh!`.
+Useful to release memory between runs with different problems.
+"""
+function clear_evalh_cache!()
+    empty!(_EVALH_MODEL_CACHE)
+    return nothing
+end
+
 function evalh!(h::AbstractVector{T}, x::AbstractVector{T}, SubProbParams::SubProblemParams) where {T<:AbstractFloat}
 
     n = length(x)
@@ -156,31 +237,40 @@ function evalh!(h::AbstractVector{T}, x::AbstractVector{T}, SubProbParams::SubPr
         return true, "All h set to zero due to zero values in b"
     end
     
+    # Build or reuse cached models
+    models = _ensure_h_models!(SubProbParams, n)
+
     for j = 1:m
-        # Create a new model for each objective
-        model = Model(HiGHS.Optimizer)
-        set_silent(model)
-        
-        # Define variables
-        @variable(model, z[1:n])
+        mdl = models[j].model
+        z   = models[j].z
 
-        # Define objective function (maximize x'z)
-        @objective(model, Max, dot(x, z))
+        # Update objective: maximize dot(x, z)
+        JuMP.set_objective(mdl, MOI.MAX_SENSE, dot(x, z))
 
-        # Add constraints
-        @constraint(model, SubProbParams.A[j] * z .<= SubProbParams.b[j])
+        # Re-apply limits in case they were changed by the user after caching
+        lim = _EVALH_LIMITS[]
+        if lim.time_limit !== nothing
+            set_optimizer_attribute(mdl, "time_limit", lim.time_limit)
+        end
+        if lim.simplex_iteration_limit !== nothing
+            set_optimizer_attribute(mdl, "simplex_iteration_limit", lim.simplex_iteration_limit)
+        end
+        if lim.ipm_iteration_limit !== nothing
+            set_optimizer_attribute(mdl, "ipm_iteration_limit", lim.ipm_iteration_limit)
+        end
+        if lim.output_flag !== nothing
+            set_optimizer_attribute(mdl, "output_flag", lim.output_flag)
+        end
 
         # Solve the problem
-        optimize!(model)
+        optimize!(mdl)
 
         # Check if solution was found (accept multiple success statuses)
-        if termination_status(model) == MOI.OPTIMAL || 
-           termination_status(model) == MOI.LOCALLY_SOLVED || 
-           termination_status(model) == MOI.ALMOST_OPTIMAL || 
-           termination_status(model) == MOI.ALMOST_LOCALLY_SOLVED
-            h[j] = objective_value(model)
+        ts = termination_status(mdl)
+        if ts == MOI.OPTIMAL || ts == MOI.LOCALLY_SOLVED || ts == MOI.ALMOST_OPTIMAL || ts == MOI.ALMOST_LOCALLY_SOLVED
+            h[j] = objective_value(mdl)
         else
-            @warn "ERROR: Linear program could not be solved! Status: $(termination_status(model))"
+            @warn "ERROR: Linear program could not be solved! Status: $(ts)"
             return false, "Failed evaluating h_$j(x^k)."
         end
     end
@@ -341,35 +431,32 @@ function bfgsupdate!(B::Vector{<:AbstractMatrix{T}}, x::AbstractVector{T},
 end
 
 """
-    jacobian_finite_diff(f!, x, m; method=:central, λ=sqrt(eps(T)))
+    jacobian_finite_diff!(J, f!, x; method=:central, λ=sqrt(eps(T)))
 
-Calculate the full Jacobian using finite differences.
+Fill the Jacobian `J` in-place using finite differences.
 
 # Arguments:
-- `f!::Function`: Function to evaluate the objective function f(x): R^n -> R^m
+- `J::AbstractMatrix{T}`: Preallocated output Jacobian (m × n)
+- `f!::Function`: Function to evaluate the objective f(x): R^n -> R^m
 - `x::AbstractVector{T}`: Point where the Jacobian will be evaluated
-- `m::Int`: Number of objective functions
 - `method::Symbol`: Finite difference method (:forward, :backward, :central)
 - `λ::T`: Step size for finite differences
 
 # Returns:
-- `J::Matrix{T}`: Full Jacobian matrix
+- `J` (the same matrix, filled in place)
 """
-function jacobian_finite_diff(f!::Function, x::AbstractVector{T}, m::Int; method::Symbol=:central, λ::T=sqrt(eps(T))) where {T<:AbstractFloat}
-    # Number of variables
-    n = length(x)
+function jacobian_finite_diff!(J::AbstractMatrix{T}, f!::Function, x::AbstractVector{T}; method::Symbol=:central, λ::T=sqrt(eps(T))) where {T<:AbstractFloat}
+    # Dimensions
+    m, n = size(J)
 
-    # Output Jacobian (m × n)
-    J = zeros(T, m, n)
-
-    # Base evaluation f(x) – reused in forward/backward formulas
+    # Base evaluation f(x)
     f_base = zeros(T, m)
     f!(f_base, x)
 
-    # Work buffers reused across iterations to avoid allocations
+    # Work buffers
     f_plus  = similar(f_base)
     f_minus = similar(f_base)
-    x_plus  = copy(x)   # updated in place
+    x_plus  = copy(x)
     x_minus = copy(x)
 
     if method == :forward
@@ -379,7 +466,7 @@ function jacobian_finite_diff(f!::Function, x::AbstractVector{T}, m::Int; method
             @inbounds for j in 1:m
                 J[j, i] = (f_plus[j] - f_base[j]) / λ
             end
-            x_plus[i] = x[i]          # restore coordinate
+            x_plus[i] = x[i]
         end
 
     elseif method == :backward
@@ -393,7 +480,7 @@ function jacobian_finite_diff(f!::Function, x::AbstractVector{T}, m::Int; method
         end
 
     elseif method == :central
-        half_inv = T(1) / (2*λ)
+        half_inv = inv(T(2) * λ)
         for i in 1:n
             x_plus[i]  += λ
             x_minus[i] -= λ
@@ -402,7 +489,6 @@ function jacobian_finite_diff(f!::Function, x::AbstractVector{T}, m::Int; method
             @inbounds for j in 1:m
                 J[j, i] = (f_plus[j] - f_minus[j]) * half_inv
             end
-            # restore coordinates for the next iteration
             x_plus[i]  = x[i]
             x_minus[i] = x[i]
         end
@@ -411,6 +497,17 @@ function jacobian_finite_diff(f!::Function, x::AbstractVector{T}, m::Int; method
     end
 
     return J
+end
+
+"""
+    jacobian_finite_diff(f!, x, m; method=:central, λ=sqrt(eps(T)))
+
+Allocate and return a new Jacobian (kept for compatibility). Prefer `jacobian_finite_diff!`.
+"""
+function jacobian_finite_diff(f!::Function, x::AbstractVector{T}, m::Int; method::Symbol=:central, λ::T=sqrt(eps(T))) where {T<:AbstractFloat}
+    n = length(x)
+    J = zeros(T, m, n)
+    return jacobian_finite_diff!(J, f!, x; method=method, λ=λ)
 end
 
 #TODO: Use this function to check if the subproblem is feasible# Optional: Presolve function to check problem feasibility
