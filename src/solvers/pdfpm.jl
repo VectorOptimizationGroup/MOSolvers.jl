@@ -11,7 +11,7 @@ mutable struct PDFPMParams{T<:AbstractFloat}
     sigma::T # Sigma parameter for regularization
     alpha::T # Alpha parameter for sufficient decrease
     max_subproblem_iter::Integer # Maximum subproblem iterations
-    lambda_factor::Union{Function, T} # Percentage of the interval [0.0, ϵ / (σ*√n)] to be used as λ (λ = lambda_factor * ϵ / (σ*√n))
+    lambda_factor::Union{Function, T} # Percentage in [0,1] of the interval [0, ϵ/(σ√n)] used as λ via λ = max(lambda_factor * ϵ/(σ√n), λ_min). If a Function, it is evaluated at runtime; recommended signature: lambda_factor(; iter, sigma, n) -> Real in [0,1]
     lambda_min::T # Minimum lambda for finite differences
 end
 
@@ -32,21 +32,32 @@ end
 # - `sigma::T = 1.0`: Sigma parameter for regularization
 # - `alpha::T = 0.1`: Alpha parameter for sufficient decrease
 # - `max_subproblem_iter::Integer = 200`: Maximum subproblem iterations
-# - `lambda_factor::T = 0.1`: Percentage of the interval [0.0, ϵ / (σ*√n)] to be used as λ (λ = λ_factor * ϵ / (σ*√n))
-# - `lambda_min::T = 1e-12`: Minimum lambda for finite differences
+# - `lambda_factor::Union{T,Function} = 0.1`: If a number, it is clamped to [0,1] and used as a percentage of the interval [0, ϵ/(σ√n)] to define λ via
+#     λ = max(lambda_factor * ϵ/(σ√n), λ_min).
+#   If a function, it is evaluated at runtime (per iteration) and should return a number in [0,1].
+#   Recommended function signature:
+#     lambda_factor(; iter, sigma, n) -> Real in [0,1]
+#   Current implementation calls it at least with `iter` as keyword: lambda_factor(; iter=iter).
+# - `lambda_min::T = 1e-12`: Minimum lambda for finite differences (λ is floored by this value).
 """
 function PDFPM_options(; verbose=1, max_iter=1000, opt_tol=1e-4, ftol=1e-4, max_time=3600.0, print_interval=10, stop_criteria=:pdfpm, store_trace=false, epsilon=1e-10, sigma=1.0, alpha=0.1, max_subproblem_iter=200, lambda_factor=0.1, lambda_min=1e-12)
     if stop_criteria ∉ [:pdfpm, :NormProgress]
         error("The stop criteria is not supported: $stop_criteria")
     end
 
-    if lambda_factor isa Function
-        lambda_factor = lambda_factor()
-    end
-
-    if lambda_factor < 0 || lambda_factor > 1
-        @warn "The lambda factor is not in the interval [0, 1], using a random value"
-        lambda_factor = rand()
+    # Do not evaluate lambda_factor if it's a function; evaluation happens during optimize
+    if !(lambda_factor isa Function)
+        # Clamp numeric lambda_factor into [0, 1]
+        if !(lambda_factor isa Real)
+            @warn "lambda_factor must be a number in [0,1] or a function; using 0.1"
+            lambda_factor = 0.1
+        else
+            if !isfinite(lambda_factor)
+                @warn "lambda_factor is not finite; using 0.1"
+                lambda_factor = 0.1
+            end
+            lambda_factor = clamp(lambda_factor, 0.0, 1.0)
+        end
     end
 
     return PDFPMParams(verbose, max_iter, opt_tol, ftol, max_time, print_interval, stop_criteria, store_trace, epsilon, sigma, alpha, max_subproblem_iter, lambda_factor, lambda_min)
@@ -116,7 +127,7 @@ function PDFPM(evalf::Function, A::Vector{<:AbstractMatrix{T}}, delta::T,
         return f
     end
 
-    Jf_is_anality = evalJf !== nothing
+    Jf_is_analytic = evalJf !== nothing
 
     # Criar função Jf! baseada em se evalJf foi fornecido ou não
     function Jf!(Jf, x; method=:central, lambda=sqrt(eps(T)))
@@ -125,7 +136,7 @@ function PDFPM(evalf::Function, A::Vector{<:AbstractMatrix{T}}, delta::T,
             Jf .= evalJf(x)
         else
             # Usar diferenças finitas
-            Jf .= jacobian_finite_diff(f!, x, m, method=method, λ=lambda)
+            jacobian_finite_diff!(Jf, f!, x; method=method, λ=lambda)
         end
         return Jf
     end
@@ -152,9 +163,6 @@ function PDFPM(evalf::Function, A::Vector{<:AbstractMatrix{T}}, delta::T,
             if !success
                 result.success = false
                 result.message = "The subproblem of CondG failed: " * message
-            # elseif abs(theta) <= 1e-15
-            #     result.success = true
-            #     result.message = "The solution was found"
             end
             return theta, p
         elseif method == :proxgrad
@@ -162,20 +170,13 @@ function PDFPM(evalf::Function, A::Vector{<:AbstractMatrix{T}}, delta::T,
             if !success
                 result.success = false
                 result.message = "The subproblem of ProxGrad failed: " * message
-            # elseif abs(theta) <= 1e-15
-            #     result.success = true
-            #     result.message = "The solution was found"
             end
             return theta, p
         elseif method == :pdfpm
             theta, p, success, message = subproblem_pdfpm(x, JF, h, SubProbParams; sigma=sigma, B=B, verbose=options.verbose)
-            # TODO: MOVER ESSA MUDANCA DE SUCCESS DIRETAMENTE PARA O SOLVER
             if !success
                 result.success = false
                 result.message = "The subproblem of PDFPM failed: " * message
-            # elseif abs(theta) <= 1e-15
-            #     result.success = true # QUESTION: If the struct result is initialized with success = true, why is it necessary to set it to true again?
-            #     result.message = "The solution was found"
             end
             return theta, p
         else
@@ -183,7 +184,7 @@ function PDFPM(evalf::Function, A::Vector{<:AbstractMatrix{T}}, delta::T,
         end
     end
 
-    _PDFPM_optimize!(result, f!, Jf!, Jf_is_anality, h!, m, subproblem, options, callback)
+    _PDFPM_optimize!(result, f!, Jf!, Jf_is_analytic, h!, m, subproblem, options, callback)
     result.total_time = time() - start_time
     return result
 end
@@ -193,7 +194,7 @@ end
 
 Função interna que implementa o algoritmo PDFPM.
 """
-function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_is_anality::Bool, h!::Function, m::Int, subproblem::Function, options::PDFPMParams, callback::Function)
+function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_is_analytic::Bool, h!::Function, m::Int, subproblem::Function, options::PDFPMParams, callback::Function)
     
     # Initialize optimization
     x = copy(result.x)
@@ -202,6 +203,7 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_i
     T = eltype(x)
     Fx = zeros(T, m)
     JF = zeros(T, m, n)
+    JF_prev = similar(JF)
     h = zeros(T, m)
     h_prev = zeros(T, m)
     #Initialize theta
@@ -213,10 +215,10 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_i
     # Initialize sigma
     sigma = options.sigma
 
-    # Initialize lambda
-    sqrt_n = sqrt(n)
-    scale = options.epsilon / (options.sigma*sqrt_n)
-    lambda_factor_val = options.lambda_factor isa Function ? options.lambda_factor(; iter=0) : options.lambda_factor
+    # Initialize lambda (keep computations in type T)
+    sqrt_n = sqrt(T(n))
+    scale = options.epsilon / (options.sigma * sqrt_n)
+    lambda_factor_val = options.lambda_factor isa Function ? convert(T, options.lambda_factor(; iter=0)) : convert(T, options.lambda_factor)
 
     lambda = ifelse(
         isfinite(scale) && scale > 0,
@@ -226,17 +228,6 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_i
 
     # Início da contagem de tempo para verificação de tempo máximo
     start_time = time()
-
-    # Define the composite objective function F(x) = f(x) + h(x)
-    function F(x; m::Int=m)
-        Fx = zeros(T, m)
-        h = zeros(T, m)
-
-        f!(Fx, x)
-        h!(h, x)
-        
-        return Fx .+ h
-    end
     
     if options.verbose > 0
         @info "----------------------------------------------------------------------"
@@ -257,7 +248,7 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_i
         return result
     end
 
-    h_prev = copy(h)
+    h_prev .= h
 
     # Solve the subproblem
     start_subproblem_time = time()
@@ -272,7 +263,9 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_i
     result.F_init .= result.Fval
 
     if options.verbose > 0
-        print_table(result)
+        if result.iter == 0 || (result.iter % options.print_interval == 0)
+            print_table(result)
+        end
     end
 
     # Stopping criteria
@@ -289,6 +282,8 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_i
             result.message = "Maximum time reached $(options.max_time)"
             return result
         end
+        # Store previous value of h
+        h_prev .= h
         
         for sub_iter in 1:options.max_subproblem_iter
             # Check convergence
@@ -297,18 +292,21 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_i
                 result.success = true
                 result.message = "Solution was found"
                 # Update result
-                norm_progress = norm(x - result.x, Inf) / max(1, norm(result.x, Inf))
-                # Compute F
-                Fx .= F(x)
-
+                norm_progress = T(norm(x - result.x, Inf) / max(1, norm(result.x, Inf)))
+                # Compute F in-place: Fx = f(x) + h(x)
+                f!(Fx, x)
+                h!(h, x)
                 # Verificar se h! falhou na avaliação de F
                 if !result.success
                     return result
                 end
+                Fx .+= h
                 #  WARNING: abs_theta is not updated here.
                 update!(result, x=x, Fval=Fx, abs_theta=zero(T), norm_progress=norm_progress, iter=iter, store_trace=options.store_trace)
                 if options.verbose > 0
-                    print_table(result)
+                    if iter == 0 || (iter % options.print_interval == 0)
+                        print_table(result)
+                    end
                     @info "Converged at iteration $iter with small tolerance"
                 end
 
@@ -337,10 +335,15 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_i
                     return result
                 end
                 sigma = sigma * 2
-                if !Jf_is_anality
-                    # Update lambda
-                    scale = options.epsilon / (sigma*sqrt(n))
-                    lambda = ifelse(isfinite(scale) && scale > 0, max(scale * rand(T), options.lambda_min), options.lambda_min)
+                if !Jf_is_analytic
+                    # Update lambda (keep computations in type T)
+                    scale = options.epsilon / (sigma * sqrt_n)
+                    lambda_factor_val = options.lambda_factor isa Function ? convert(T, options.lambda_factor(; iter=iter)) : convert(T, options.lambda_factor)
+                    lambda = ifelse(
+                        isfinite(scale) && scale > 0,
+                        max(scale * lambda_factor_val, options.lambda_min),
+                        options.lambda_min
+                    )
                     Jf!(JF, x; lambda=lambda)
                 end
             end
@@ -358,19 +361,16 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_i
             if !result.success
                 return result
             end
-            println("theta: ", theta)
-
-            # update!(result, abs_theta=abs(theta), store_trace=options.store_trace)
         end
 
         # Update result
-        norm_progress = norm(x - result.x, Inf) / max(1, norm(result.x, Inf))
+        norm_progress = T(norm(x - result.x, Inf) / max(1, norm(result.x, Inf)))
 
         # Update lambda
-        if !Jf_is_anality
-            scale = options.epsilon / (sigma*sqrt_n)
-            lambda_factor_val = options.lambda_factor isa Function ? options.lambda_factor(; iter=iter) : options.lambda_factor
-            
+        if !Jf_is_analytic
+            scale = options.epsilon / (sigma * sqrt_n)
+            lambda_factor_val = options.lambda_factor isa Function ? convert(T, options.lambda_factor(; iter=iter)) : convert(T, options.lambda_factor)
+
             lambda = ifelse(
                 isfinite(scale) && scale > 0,
                 max(scale * lambda_factor_val, options.lambda_min),
@@ -378,12 +378,13 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_i
             )
         end
 
-        JF_prev = copy(JF)
+        JF_prev .= JF
         Jf!(JF, x; lambda=lambda)
         
         # Update B matrices using BFGS
         # BFGS_update!(B, n, m, x, result.x, JF, JF_prev) # TODO: Check here if the B matrices is ill-conditioned
-        bfgsupdate!(B, x, result.x, JF, JF_prev, theta)
+        theta_bfgs = isfinite(theta) ? theta : one(T)  # ensures eps ≈ 1e-6 inside bfgsupdate!
+        bfgsupdate!(B, x, result.x, JF, JF_prev, theta_bfgs)
 
         # Solve the subproblem with multiple iterations
         start_subproblem_time = time()
@@ -395,28 +396,22 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_i
         update!(result, x=x, Fval=Fx, abs_theta=abs(theta), norm_progress=norm_progress, iter=iter, store_trace=options.store_trace)
 
         if options.verbose > 0
-            print_table(result)
+            if result.iter == 0 || (result.iter % options.print_interval == 0)
+                print_table(result)
+            end
         end
 
         # Stopping criteria
         # Test optimality
         if options.stop_criteria == :NormProgress
-            if norm_progress <= options.opt_tol && result.abs_theta <= options.opt_tol 
-                result.message = "The solution was found using |θ_PDFPM| <= $(options.opt_tol) and norm_progress <= $(options.opt_tol)"
+            if norm_progress <= options.ftol && result.abs_theta <= options.opt_tol 
+                result.message = "The solution was found using |θ_PDFPM| <= $(options.opt_tol) and norm_progress <= $(options.ftol)"
                 result.success = true
-                # update!(result, x=x, Fval=Fx, abs_theta=result.abs_theta, norm_progress=norm_progress, iter=iter, store_trace=options.store_trace)
-                # if options.verbose > 0
-                #     print_table(result)
-                # end
                 return result
             end
         elseif result.abs_theta <= options.opt_tol
             result.message = "The solution was found using |θ_PDFPM| <= $(options.opt_tol)"
             result.success = true
-            # update!(result, x=x, Fval=Fx, abs_theta=result.abs_theta, norm_progress=norm_progress, iter=iter, store_trace=options.store_trace)
-            # if options.verbose > 0
-            #    print_table(result)
-            # end
             return result
         end
 
