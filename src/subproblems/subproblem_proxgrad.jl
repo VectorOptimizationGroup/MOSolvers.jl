@@ -235,27 +235,21 @@
                         max_iter=3000, max_time=5.0,
                         verbose=0, warm_start=nothing,
                         solver_cache=nothing)
-      -> (θ, u, success, msg)
+  -> (θ, u, success, msg)
 
-Resolve o subproblema proximal, no ponto `x`:
+Proximal subproblem at point `x`.
 
+If all h ≈ 0:
     min τ + (σ/2)‖u - x‖²
-    s.a.  ⟨∇f_j(x), u - x⟩ + ( ⟨b_j, w_j⟩ - h_j ) ≤ τ,  se h_j ≉ 0
-          ⟨∇f_j(x), u - x⟩                        ≤ τ,  se h_j ≈ 0
-          A_j' w_j = u                  (∀ j)
-          lb ≤ u ≤ ub,  w_j ≥ 0
+    s.t. ⟨∇f_j(x), u - x⟩ ≤ τ   (∀ j)
+         lb ≤ u ≤ ub
 
-Parâmetros:
-- `sigma` (σ) regulariza o objetivo (proximidade a `x`).
-- `tol`, `max_iter`, `max_time`, `verbose`: atributos do Ipopt.
-- `warm_start`: chute inicial para `u` (respeitado se ∈ [lb,ub]).
-- `solver_cache`: reuso de `Model` para múltiplas chamadas.
-
-Retorna:
-- `θ = τ* + (σ/2)‖u* - x‖²`,
-- `u` (solução),
-- `success::Bool`,
-- `msg::String` (status do solver).
+Otherwise (general case):
+    min τ + (σ/2)‖u - x‖²
+    s.t. ⟨∇f_j(x), u - x⟩ + (⟨b_j, w_j⟩ - h_j) ≤ τ,   if h_j ≉ 0
+         ⟨∇f_j(x), u - x⟩                       ≤ τ,   if h_j ≈ 0
+         A_j' w_j = u                            (∀ j)
+         lb ≤ u ≤ ub,  w_j ≥ 0
 """
 function subproblem_proxgrad(x::AbstractVector{T}, Jf::AbstractMatrix{T}, h::AbstractVector{T},
                              SubProbParams::SubProblemParams;
@@ -267,8 +261,9 @@ function subproblem_proxgrad(x::AbstractVector{T}, Jf::AbstractMatrix{T}, h::Abs
                              warm_start::Union{Nothing, AbstractVector{T}} = nothing,
                              solver_cache::Union{Nothing, Model} = nothing) where {T<:AbstractFloat}
 
-    # --- checks leves ---
-    if !(isfinite(sigma) && sigma ≥ T(0)) || any(!isfinite, x) || any(!isfinite, Jf) || any(!isfinite, h)
+    # -- checks leves --
+    if !(isfinite(sigma) && sigma ≥ T(0)) || any(!isfinite, x) ||
+       any(!isfinite, Jf) || any(!isfinite, h)
         return convert(T, NaN), fill(convert(T, NaN), length(x)), false, "Invalid input"
     end
 
@@ -280,31 +275,28 @@ function subproblem_proxgrad(x::AbstractVector{T}, Jf::AbstractMatrix{T}, h::Abs
     lb = SubProbParams.lb
     ub = SubProbParams.ub
 
-    # --- (Re)cria modelo ---
+    # -- (Re)cria modelo --
     model = solver_cache === nothing ? Model(Ipopt.Optimizer) : (empty!(solver_cache); solver_cache)
-
-    # Verbosidade/tolerâncias/recursos (Ipopt)
+    if verbose > 0; unset_silent(model); else; set_silent(model); end
+    set_optimizer_attribute(model, "print_level", verbose)
     set_optimizer_attribute(model, "max_iter", max_iter)
+    set_optimizer_attribute(model, "max_cpu_time", float(max_time))
     set_optimizer_attribute(model, "tol", max(tol, 1e-14))
     set_optimizer_attribute(model, "constr_viol_tol", max(tol, 1e-14))
-    set_optimizer_attribute(model, "acceptable_tol", max(10tol, 1e-12))
-    set_optimizer_attribute(model, "print_level", verbose)
-    set_optimizer_attribute(model, "max_cpu_time", float(max_time))  # tempo em segundos
-
-    # Opções estáveis e simples
+    set_optimizer_attribute(model, "acceptable_tol", max(10*tol, 1e-12))
     set_optimizer_attribute(model, "nlp_scaling_method", "gradient-based")
     set_optimizer_attribute(model, "mu_strategy", "adaptive")
     set_optimizer_attribute(model, "honor_original_bounds", "yes")
 
-    # --- variáveis ---
+    # -- variáveis --
     @variable(model, tau)
     @variable(model, lb[i] <= u[i in Iu] <= ub[i])
 
-    # direção d = u - x (apenas para expressar o termo proximal)
+    # d = u - x (para o termo proximal)
     @variable(model, d[i in Iu])
     @constraint(model, [i in Iu], d[i] == u[i] - x[i])
 
-    # warm-start suave
+    # warm-start (se viável)
     if warm_start !== nothing && length(warm_start) == length(Iu)
         for i in Iu
             v = warm_start[i]
@@ -314,38 +306,49 @@ function subproblem_proxgrad(x::AbstractVector{T}, Jf::AbstractMatrix{T}, h::Abs
         end
     end
 
-    # objetivo: tau + (σ/2)‖d‖²
+    # objetivo: τ + (σ/2)‖d‖²
     @objective(model, Min, tau + 0.5*sigma*sum(d[i]^2 for i in Iu))
 
-    # --- restrições por objetivo ---
-    for j in 1:m
-        Aj = A[j]
-        @assert axes(Aj, 2) == Iu "Dimensão de A[$j] incompatível com u"
-        rset = axes(Aj, 1)
+    # -- branch h ≈ 0 (todos os componentes) --
+    all_h_zero = all(j -> isapprox(h[j], zero(T); atol = max(tol, T(1e-14))), 1:m)
 
-        # A_j' * w_j = u
-        wj = @variable(model, [r in rset], lower_bound = 0.0)
-        for i in axes(Aj, 2)
-            @constraint(model, sum(Aj[r, i]*wj[r] for r in rset) == u[i])
+    if all_h_zero
+        # ⟨∇f_j(x), d⟩ ≤ τ
+        for j in 1:m
+            grad_j = view(Jf, j, axes(Jf,2))
+            @constraint(model, sum(grad_j[i] * d[i] for i in Iu) <= tau)
         end
+    else
+        # Caso geral: com w_j e A_j' w_j = u para todos os j
+        for j in 1:m
+            Aj = A[j]
+            @assert axes(Aj, 2) == Iu "Dimensão de A[$j] incompatível com u"
+            rset = axes(Aj, 1)
 
-        # ⟨∇f_j(x), d⟩ [ + (⟨b_j, w_j⟩ - h_j) ] ≤ τ
-        grad_j = view(Jf, j, axes(Jf,2))
-        if !isapprox(h[j], zero(T); atol = max(tol, T(1e-14)))
-            @constraint(model, dot(grad_j, [d[i] for i in Iu]) + (dot(b[j], wj) - h[j]) <= tau)
-        else
-            @constraint(model, dot(grad_j, [d[i] for i in Iu]) <= tau)
+            # A_j' * w_j = u, w_j ≥ 0
+            wj = @variable(model, [r in rset], lower_bound = 0.0)
+            for i in axes(Aj, 2)
+                @constraint(model, sum(Aj[r, i]*wj[r] for r in rset) == u[i])
+            end
+
+            # ⟨∇f_j(x), d⟩ + (⟨b_j, w_j⟩ - h_j) ≤ τ  (somente se h_j ≉ 0)
+            grad_j = view(Jf, j, axes(Jf,2))
+            if !isapprox(h[j], zero(T); atol = max(tol, T(1e-14)))
+                @constraint(model, sum(grad_j[i]*d[i] for i in Iu) + (dot(b[j], wj) - h[j]) <= tau)
+            else
+                @constraint(model, sum(grad_j[i]*d[i] for i in Iu) <= tau)
+            end
         end
     end
 
-    # --- solve ---
+    # -- solve --
     optimize!(model)
     status = termination_status(model)
 
     if status in (MOI.OPTIMAL, MOI.LOCALLY_SOLVED, MOI.ALMOST_OPTIMAL, MOI.ALMOST_LOCALLY_SOLVED)
-        τ  = convert(T, value(tau))
-        ū  = [convert(T, value(u[i])) for i in Iu]
-        θ  = τ + 0.5*sigma*sum((ū[i] - x[i])^2 for i in Iu)
+        τ = convert(T, value(tau))
+        ū = [convert(T, value(u[i])) for i in Iu]
+        θ = τ + 0.5*sigma*sum((ū[i] - x[i])^2 for i in Iu)
         return θ, ū, true, string(status)
     elseif status == MOI.INFEASIBLE
         return convert(T, Inf), [T(NaN) for _ in Iu], false, "Infeasible"
