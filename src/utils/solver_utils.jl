@@ -16,6 +16,7 @@ Container structure holding the results produced by an optimization solver.
 - `total_time::Float64`: Total wall-clock time spent by the solver (seconds).
 - `subproblem_time::Float64`: Cumulative time spent solving sub-problems (seconds).
 - `x_trace::Vector{Vector{T}}`: History of iterates (populated when `store_trace=true`).
+- `Fval_trace::Vector{Vector{T}}`: History of `Fval` values when tracing is enabled.
 - `abs_theta_trace::Vector{T}`: History of `abs_theta` values when tracing is enabled.
 - `norm_progress_trace::Vector{T}`: History of `norm_progress` values when tracing is enabled.
 - `success::Bool`: `true` if the solver terminated successfully, `false` otherwise.
@@ -34,6 +35,7 @@ mutable struct OptimResult{T<:AbstractFloat}
     total_time::Float64
     subproblem_time::Float64
     x_trace::Vector{Vector{T}}
+    Fval_trace::Vector{Vector{T}}
     abs_theta_trace::Vector{T}
     norm_progress_trace::Vector{T}
     success::Bool
@@ -48,30 +50,38 @@ function OptimResult(x0::AbstractVector{T}, Fval::AbstractVector{T}) where {T<:A
         copy(Fval),             # F_init
         0,                      # iter
         T(Inf),                 # abs_theta
-        T(Inf),                 # norm_progress
+        T(NaN),                 # norm_progress
         0,                      # n_f_evals
         0,                      # n_Jf_evals
-        0.0,                      # total_time
-        0.0,                      # subproblem_time
+        0.0,                    # total_time
+        0.0,                    # subproblem_time
         Vector{Vector{T}}(),    # x_trace
+        Vector{Vector{T}}(),    # Fval_trace
         T[],                    # abs_theta_trace
         T[],                    # norm_progress_trace
         true,                   # success
         "Optimization not started")  # message
 end
 
-function update!(result::OptimResult{T}; x=nothing, theta=nothing, norm_progress=nothing, iter=nothing, store_trace=false) where {T<:AbstractFloat}
+function update!(result::OptimResult{T}; x=nothing, Fval=nothing, abs_theta=nothing, norm_progress=nothing, iter=nothing, store_trace=false) where {T<:AbstractFloat}
     if x !== nothing
-        result.x = x
+        result.x .= x
         if store_trace
-            push!(result.x_trace, x)
+            push!(result.x_trace, copy(result.x))
         end
     end
 
-    if theta !== nothing
-        result.abs_theta = theta
+    if Fval !== nothing
+        result.Fval .= Fval
         if store_trace
-            push!(result.abs_theta_trace, theta)
+            push!(result.Fval_trace, copy(result.Fval))
+        end
+    end
+
+    if abs_theta !== nothing
+        result.abs_theta = abs_theta
+        if store_trace
+            push!(result.abs_theta_trace, abs_theta)
         end
     end
 
@@ -204,8 +214,8 @@ function print_table(result::OptimResult)
         @info separator
         
         # Print progress row
-        progress_str = @sprintf("%5d  %18.6e  %25.6e", 
-                result.iter, result.abs_theta, 0.0)
+        progress_str = @sprintf("%5d  %18.6e  %25s", 
+                        result.iter, result.abs_theta, "--")
         @info progress_str
     else
         # Print progress row
@@ -267,6 +277,67 @@ function BFGS_update!(B::Vector{<:AbstractMatrix{T}}, n::Int, m::Int,
     end
     
     return B  # retorna as matrizes atualizadas para encadeamento de chamadas
+end
+
+
+"""
+BFGS-like update para um *stack* de matrizes B[:, :, j], j=1..m (in-place).
+- Formatos esperados:
+    length(x) = length(xprev) = n
+    size(JF) = size(JFprev) = (m, n)
+    size(B[j]) = (n, n) for all j
+"""
+function bfgsupdate!(B::Vector{<:AbstractMatrix{T}}, x::AbstractVector{T},
+                     xprev::AbstractVector{T},
+                     JF::AbstractMatrix{T},
+                     JFprev::AbstractMatrix{T},
+                     theta::T) where {T<:Real}
+
+    n = length(x)
+    m, nJ = size(JF)
+    @assert length(xprev) == n
+    @assert size(JFprev) == (m, nJ)
+    @assert nJ == n
+    @assert length(B) == m
+    @assert all(size(Bi) == (n, n) for Bi in B)
+
+    s   = x .- xprev
+    Dxs = maximum(JF * s)
+    eps = T(1e-6) * min(abs(theta), one(theta))
+
+    Bs = similar(s)
+    y  = similar(s)
+
+    @views for ind in 1:m
+        yi  = view(JF,     ind, :)
+        ypi = view(JFprev, ind, :)
+        y .= yi .- ypi
+
+        Bi = B[ind]
+        mul!(Bs, Bi, s)
+
+        sTy  = dot(s, y)
+        sTBs = dot(s, Bs)
+
+        # rho = Dxs - dot( linha, s )  -- garanta Vector:
+        rho = Dxs - dot(vec(ypi), s)
+
+        if sTy > eps
+            Bi .-= (Bs * transpose(Bs)) ./ sTBs
+            Bi .+= (y  * transpose(y )) ./ sTy
+        elseif rho > eps
+            den = (rho - sTy)^2 + rho * sTBs
+            BssT =  Bs * transpose(Bs)
+            yyT  =  y  * transpose(y)
+            ysTB =  y  * transpose(Bs)
+            BsyT =  Bs * transpose(y)
+            Bi .-= (rho/den)         .* BssT
+            Bi .+= (sTBs/den)        .* yyT
+            Bi .+= ((rho-sTy)/den)   .* (ysTB .+ BsyT)
+        end
+    end
+
+    return B
 end
 
 """
