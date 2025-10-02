@@ -66,7 +66,7 @@ mutable struct LineSearchResult{T<:AbstractFloat}
 end
 
 function LineSearchResult(; stp::T=0.0, F_final::AbstractVector{T}, nfev::Int=0, success::Bool=true, message::String="The Armijo line search has not started") where {T<:AbstractFloat}
-    return LineSearchResult(stp, F_final, nfev, success, message)
+    return LineSearchResult(stp, copy(F_final), nfev, success, message)
 end
 
 function armijo(F::Function, x::AbstractVector{T}, d::AbstractVector{T}, Fx::AbstractVector{T}, 
@@ -186,7 +186,7 @@ function BacktrackMO!(result::LineSearchResult, φ::Function, φ_grad_0::Vector{
     
     if isempty(failed_indices)
         result.stp = α
-        result.F_final = φ_val
+        result.F_final = copy(φ_val)
         result.success = true
         result.message = "A step size that satisfies the Armijo condition was found"
         return result
@@ -216,7 +216,7 @@ function BacktrackMO!(result::LineSearchResult, φ::Function, φ_grad_0::Vector{
         failed_indices = findall(.!(φ_val .<= φ_0 .+ options.rho * α * factor))
         if isempty(failed_indices)
             result.stp = α
-            result.F_final = φ_val
+            result.F_final = copy(φ_val)
             result.success = true
             result.message = "A step size that satisfies the Armijo condition was found"
             return result
@@ -225,7 +225,7 @@ function BacktrackMO!(result::LineSearchResult, φ::Function, φ_grad_0::Vector{
     end
 
     result.stp =  zero(T)
-    result.F_final = φ_val
+    result.F_final = copy(φ_val)
     result.message = "The maximum number of iterations for the Armijo line search was reached"
     result.success = false
     return result
