@@ -163,31 +163,28 @@ function _ProxGrad_optimize!(result::OptimResult, f!::Function, Jf!::Function, h
     T = eltype(x)
     Fx = zeros(T, m)
     JF = zeros(T, m, n)
-    h = zeros(T, m)
+    h  = zeros(T, m)
+
+    # Preallocated buffers for line-search evaluations F(y) = f(y) + h(y)
+    Fx_ls = zeros(T, m)
+    h_ls  = zeros(T, m)
+    F_ls  = zeros(T, m)
 
     # Início da contagem de tempo para verificação de tempo máximo
     start_time = time()
 
-    # Define the composite objective function F(x) = f(x) + h(x)
-    function F(x; m::Int=m)
-        Fx = zeros(T, m)
-        h = zeros(T, m)
-        
-        # Usar try-catch para capturar qualquer erro durante a avaliação
+    # Define the composite objective function F(y) = f(y) + h(y) (in-place)
+    function F(y; m::Int=m)
         try
-            f!(Fx, x)
-            h!(h, x)
-            
-            # Verificar se h! falhou
+            f!(Fx_ls, y)
+            h!(h_ls, y)
             if !result.success
-                # Em vez de lançar erro, retornar um código especial
-                # que será verificado em armijo
                 return nothing, result.message
             end
-            
-            return Fx + h, nothing
+            F_ls .= Fx_ls
+            F_ls .+= h_ls
+            return F_ls, nothing
         catch e
-            # Capturar qualquer outro erro que possa ocorrer
             result.success = false
             result.message = "Error evaluating F: " * string(e)
             return nothing, result.message
@@ -211,7 +208,9 @@ function _ProxGrad_optimize!(result::OptimResult, f!::Function, Jf!::Function, h
         return result
     end
     
-    update!(result, x=x, Fval=Fx + h, store_trace=options.store_trace)
+    F_ls .= Fx
+    F_ls .+= h
+    update!(result, x=x, Fval=F_ls, store_trace=options.store_trace)
     result.F_init .= result.Fval
 
     # Solve the subproblem
@@ -222,11 +221,15 @@ function _ProxGrad_optimize!(result::OptimResult, f!::Function, Jf!::Function, h
         return result
     end
 
-    update!(result, x=x, abs_theta=abs(theta), Fval=Fx + h, norm_progress=T(NaN), store_trace=options.store_trace)
+    F_ls .= Fx
+    F_ls .+= h
+    update!(result, x=x, abs_theta=abs(theta), Fval=F_ls, norm_progress=T(NaN), store_trace=options.store_trace)
     result.F_init .= result.Fval
 
     if options.verbose > 0
-        print_table(result)
+        if result.iter == 0 || (result.iter % options.print_interval == 0)
+            print_table(result)
+        end
     end
 
     # Stopping criteria
@@ -236,6 +239,8 @@ function _ProxGrad_optimize!(result::OptimResult, f!::Function, Jf!::Function, h
         return result
     end
 
+    # Reusable direction buffer
+    d = similar(x)
     for iter in 1:options.max_iter
         if time() - start_time >= options.max_time
             result.success = false
@@ -243,8 +248,8 @@ function _ProxGrad_optimize!(result::OptimResult, f!::Function, Jf!::Function, h
             return result
         end
 
-        # Define the search direction
-        d = p - x
+        # Define the search direction (reuse buffer)
+        d .= p .- x
 
         # Compute the step size
         line_search_result = armijo(F, x, d, result.Fval, JF, factor=-abs(theta))
@@ -256,15 +261,17 @@ function _ProxGrad_optimize!(result::OptimResult, f!::Function, Jf!::Function, h
             break
         end
 
-        # Update x
-        x = x + line_search_result.stp * d
+        # Update x (in-place)
+        x .+= line_search_result.stp .* d
 
-        norm_progress = norm(x - result.x, Inf) / max(1, norm(result.x, Inf))
+        norm_progress = T(norm(x - result.x, Inf) / max(1, norm(result.x, Inf)))
 
         # Compute F and JF
         f!(Fx, x)
         Jf!(JF, x)
-        h = line_search_result.F_final - Fx #Reduz o custo de chamar h!
+        # Reduz o custo de chamar h!: h .= F_final - Fx (in-place)
+        h .= line_search_result.F_final
+        h .-= Fx
 
         # Solve the subproblem
         start_subproblem_time = time()
@@ -278,14 +285,16 @@ function _ProxGrad_optimize!(result::OptimResult, f!::Function, Jf!::Function, h
         update!(result, x=x, Fval=line_search_result.F_final, abs_theta=abs(theta), norm_progress=norm_progress, iter=iter, store_trace=options.store_trace)
 
         if options.verbose > 0
-            print_table(result)
+            if result.iter == 0 || (result.iter % options.print_interval == 0)
+                print_table(result)
+            end
         end
 
         # Stopping criteria
         # Test optimality
         if options.stop_criteria == :NormProgress
-            if norm_progress <= options.opt_tol && result.abs_theta <= options.opt_tol 
-                result.message = "The solution was found using |θ_ProxGrad| <= $(options.opt_tol) and norm_progress <= $(options.opt_tol)"
+            if norm_progress <= options.ftol && result.abs_theta <= options.opt_tol 
+                result.message = "The solution was found using |θ_ProxGrad| <= $(options.opt_tol) and norm_progress <= $(options.ftol)"
                 break
             end
         elseif result.abs_theta <= options.opt_tol
