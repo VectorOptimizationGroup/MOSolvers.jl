@@ -118,10 +118,7 @@ function CondG(evalf::Function, evalJf::Function, A::Vector{<:AbstractMatrix{T}}
             theta, p, success, message = subproblem_condg(x, JF, h, SubProbParams; verbose=options.verbose)
             if !success
                 result.success = false
-                result.message = "The subproblem of CondG failed: " * message #QUESTION: Porque * message?
-            # elseif abs(theta) <= 1e-15
-            #     result.success = true
-            #     result.message = "The solution was found"
+                result.message = "The subproblem of CondG failed: " * message
             end
             return theta, p
         elseif method == :proxgrad
@@ -129,9 +126,6 @@ function CondG(evalf::Function, evalJf::Function, A::Vector{<:AbstractMatrix{T}}
             if !success
                 result.success = false
                 result.message = "The subproblem of ProxGrad failed: " * message
-            # elseif abs(theta) <= 1e-15
-            #     result.success = true
-            #     result.message = "The solution was found"
             end
             return theta, p
         elseif method == :pdfpm
@@ -139,9 +133,6 @@ function CondG(evalf::Function, evalJf::Function, A::Vector{<:AbstractMatrix{T}}
             if !success
                 result.success = false
                 result.message = "The subproblem of PDFPM failed: " * message
-            # elseif abs(theta) <= 1e-15
-            #     result.success = true
-            #     result.message = "The solution was found"
             end
             return theta, p
         else
@@ -178,7 +169,7 @@ function _CondG_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::
     start_time = time()
 
     # Define the composite objective function F(x) = f(x) + h(x)
-    function F!(x; m::Int=m)
+    function F(x; m::Int=m)
         Fx = zeros(T, m)
         h = zeros(T, m)
         
@@ -198,7 +189,7 @@ function _CondG_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::
         catch e
             # Capturar qualquer outro erro que possa ocorrer
             result.success = false
-            result.message = "Error evaluating F!: " * string(e)
+            result.message = "Error evaluating F: " * string(e)
             return nothing, result.message
         end
     end
@@ -219,9 +210,6 @@ function _CondG_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::
     if !result.success
         return result
     end
-    
-    result.Fval .= Fx + h
-    result.F_init .= result.Fval
 
     # Solve the subproblem
     start_subproblem_time = time()
@@ -231,7 +219,8 @@ function _CondG_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::
         return result
     end
 
-    result.abs_theta = abs(theta)
+    update!(result, x=x, abs_theta=abs(theta), Fval=Fx + h, norm_progress=T(NaN), store_trace=options.store_trace)
+    result.F_init .= result.Fval
 
     if options.verbose > 0
         print_table(result)
@@ -255,9 +244,7 @@ function _CondG_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::
         d = p - x
 
         # Compute the step size
-        line_search_result = armijo(F!, x, d, result.Fval, JF, factor=-abs(theta))
-        
-        # Se a busca linear falhou devido a um erro em F!, a mensagem já foi atualizada
+        line_search_result = armijo(F, x, d, result.Fval, JF, factor=-abs(theta))
 
         if !line_search_result.success
             result.message = line_search_result.message
@@ -269,15 +256,10 @@ function _CondG_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::
 
         norm_progress = norm(x - result.x, Inf) / max(1, norm(result.x, Inf))
 
-        # Update
-        update!(result, x=x, norm_progress=norm_progress, iter=iter, store_trace=options.store_trace)
-
         # Compute F and JF
         f!(Fx, x)
         Jf!(JF, x)
         h = line_search_result.F_final - Fx #Reduz o custo de chamar h!
-        
-        result.Fval .= line_search_result.F_final
 
         # Solve the subproblem
         start_subproblem_time = time()
@@ -287,7 +269,8 @@ function _CondG_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::
             break
         end
 
-        result.abs_theta = abs(theta)
+        # Update
+        update!(result, x=x, Fval=line_search_result.F_final, abs_theta=abs(theta), norm_progress=norm_progress, iter=iter, store_trace=options.store_trace)
 
         if options.verbose > 0
             print_table(result)
