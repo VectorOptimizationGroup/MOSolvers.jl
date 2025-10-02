@@ -69,19 +69,41 @@ function LineSearchResult(; stp::T=0.0, F_final::AbstractVector{T}, nfev::Int=0,
     return LineSearchResult(stp, copy(F_final), nfev, success, message)
 end
 
-function armijo(F::Function, x::AbstractVector{T}, d::AbstractVector{T}, Fx::AbstractVector{T}, 
-                          Jfx::AbstractMatrix{T}; factor::T=nothing, options::ArmijoParams=ArmijoParams()) where {T<:AbstractFloat}
+"""
+    armijo(F, x, d, Fx, Jfx; factor=nothing, options=ArmijoParams())
+
+Multiobjective Armijo backtracking line-search.
+
+- `F(y)` must return `(F_val::AbstractVector{T}, nothing)` on success or `(nothing, msg::String)` on failure.
+- `factor` can be:
+    - `nothing` → uses `maximum(Jfx*d)` (scalar) as the Armijo slope surrogate;
+    - a scalar (e.g. `-abs(theta)`).
+"""
+function armijo(F::Function, x::AbstractVector{T}, d::AbstractVector{T}, Fx::AbstractVector{T},
+                Jfx::AbstractMatrix{T}; factor::Union{T,Nothing}=nothing,
+                options::ArmijoParams=ArmijoParams()) where {T<:AbstractFloat}
     
     
     result = LineSearchResult(F_final=Fx)
-    
+
     m = length(Fx)
 
-    function φ(α::T) where {T<:AbstractFloat}
+    # Typed local copies of options
+    ρ      = T(options.rho)
+    α_init = T(options.alpha_init)
+    α_min  = T(options.alpha_min)
+    α_max  = T(options.alpha_max)
+
+    # Reusable trial point buffer to avoid allocations: y = x + α d
+    y = similar(x)
+
+    function φ(αk::T)
         result.nfev += 1
-        
+        @inbounds begin
+            @. y = x + αk * d
+        end
         # Chamar F com o novo formato de retorno (valor, erro)
-        F_val, error_msg = F(x + α * d)
+        F_val, error_msg = F(y)
         
         # Verificar se houve erro na avaliação
         if F_val === nothing
@@ -96,13 +118,17 @@ function armijo(F::Function, x::AbstractVector{T}, d::AbstractVector{T}, Fx::Abs
         return F_val
     end
 
-    φ_grad_0 = [dot(Jfx[i,:], d) for i in 1:m]
+    @views φ_grad_0 = [dot(view(Jfx, i, :), d) for i in 1:m]
 
-    if isnothing(factor)
-        factor = maximum(φ_grad_0)
+    factor_val = factor === nothing ? maximum(φ_grad_0) : factor
+    factor_val = T(factor_val)
+
+    # Clamp initial step into [α_min, α_max]
+    if !(α_min <= α_init <= α_max)
+        α_init = clamp(α_init, α_min, α_max)
     end
 
-    BacktrackMO!(result, φ, φ_grad_0, Fx, factor, options)
+    BacktrackMO!(result, φ, φ_grad_0, Fx, factor_val, options)
     
     if options.verbose >= 1
         @info result.message
@@ -152,13 +178,16 @@ function safeguarded_backtrack(α::T, φ::T, φ_grad_0::T, φ_0::T; τ₁::T=0.0
     such as the bisection of the search interval.
 """
     if φ_grad_0 < zero(T)
-
-        α_trial = (- φ_grad_0 * α^2) / (T(2.0) * (φ - φ_0 - α * φ_grad_0))
-
-        if !(τ₁ * α <= α_trial <= τ₂ * α)
+        den = (φ - φ_0 - α * φ_grad_0)
+        if iszero(den) || !isfinite(den)
             α *= T(0.5)
         else
-            α = α_trial
+            α_trial = (- φ_grad_0 * α^2) / (T(2.0) * den)
+            if !(τ₁ * α <= α_trial <= τ₂ * α) || !isfinite(α_trial)
+                α *= T(0.5)
+            else
+                α = α_trial
+            end
         end
     else
         α *= T(0.5)
@@ -167,22 +196,28 @@ function safeguarded_backtrack(α::T, φ::T, φ_grad_0::T, φ_0::T; τ₁::T=0.0
     return α
 end
 
-function BacktrackMO!(result::LineSearchResult, φ::Function, φ_grad_0::Vector{T}, φ_0::Vector{T}, factor::T, options::ArmijoParams) where {T<:AbstractFloat}
+function BacktrackMO!(result::LineSearchResult{T}, φ::Function, φ_grad_0::Vector{T}, φ_0::Vector{T}, factor::T, options::ArmijoParams) where {T<:AbstractFloat}
 
     if options.verbose >= 1
         @info "Starting Armijo line search"
     end
 
-    #Check if the initial step size satisfies the Armijo condition
-    φ_val = φ(options.alpha_init)
-    α = options.alpha_init
+    # Typed local copies of options (keep in T)
+    ρ      = T(options.rho)
+    α      = T(options.alpha_init)
+    α_min  = T(options.alpha_min)
+    α_max  = T(options.alpha_max)
+    α      = clamp(α, α_min, α_max)
+    
+    # Check if the initial step size satisfies the Armijo condition
+    φ_val = φ(α)
     
     # Verificar se houve erro na avaliação
     if !result.success
         return result
     end
     
-    failed_indices = findall(.!(φ_val .<= φ_0 .+ options.rho * α * factor))
+    failed_indices = findall(@. φ_val > (φ_0 + ρ * α * factor))
     
     if isempty(failed_indices)
         result.stp = α
@@ -199,8 +234,8 @@ function BacktrackMO!(result::LineSearchResult, φ::Function, φ_grad_0::Vector{
             break
         end
         
-        if α <= options.alpha_min
-            result.stp = options.alpha_min
+        if α <= α_min
+            result.stp = α_min
             result.message = "The Armijo line search did not converge"
             result.success = false
             return result
@@ -213,7 +248,7 @@ function BacktrackMO!(result::LineSearchResult, φ::Function, φ_grad_0::Vector{
             return result
         end
         
-        failed_indices = findall(.!(φ_val .<= φ_0 .+ options.rho * α * factor))
+        failed_indices = findall(@. φ_val > (φ_0 + ρ * α * factor))
         if isempty(failed_indices)
             result.stp = α
             result.F_final = copy(φ_val)
