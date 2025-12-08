@@ -382,9 +382,8 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_i
         Jf!(JF, x; lambda=lambda)
         
         # Update B matrices using BFGS
-        # BFGS_update!(B, n, m, x, result.x, JF, JF_prev) # TODO: Check here if the B matrices is ill-conditioned
         theta_bfgs = isfinite(theta) ? theta : one(T)  # ensures eps ≈ 1e-6 inside bfgsupdate!
-        bfgsupdate!(B, x, result.x, JF, JF_prev, theta_bfgs)
+        bfgsupdate!(B, x, result.x, JF, JF_prev, theta_bfgs) # TODO: Check here if the B matrices is ill-conditioned
 
         # Solve the subproblem with multiple iterations
         start_subproblem_time = time()
