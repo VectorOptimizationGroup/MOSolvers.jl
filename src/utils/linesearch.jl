@@ -102,16 +102,16 @@ function armijo(F::Function, x::AbstractVector{T}, d::AbstractVector{T}, Fx::Abs
         @inbounds begin
             @. y = x + αk * d
         end
-        # Chamar F com o novo formato de retorno (valor, erro)
+        # Call F with the new return format (value, error)
         F_val, error_msg = F(y)
         
-        # Verificar se houve erro na avaliação
+        # Check if there was an error in evaluation
         if F_val === nothing
-            # Propagar o erro para cima
+            # Propagate the error up
             result.success = false
             result.message = error_msg
-            # Retornar um valor que fará com que a condição de Armijo falhe
-            # para garantir que o algoritmo pare
+            # Return a value that will cause the Armijo condition to fail
+            # to ensure the algorithm stops
             return fill(T(Inf), m)
         end
         
@@ -152,7 +152,7 @@ function safeguarded_backtrack(α::T, φ::T, φ_grad_0::T, φ_0::T; τ₁::T=0.0
     - `g₀` is the directional derivative ∇f^T d at the current point,
     - `f` is the function value after a step `α` (current `stp`).
 
-    Estimamos o coeficiente quadrático por:
+    We estimate the quadratic coefficient by:
 
         q₂ = (f - f₀ - α g₀) / α²
 
@@ -212,7 +212,7 @@ function BacktrackMO!(result::LineSearchResult{T}, φ::Function, φ_grad_0::Vect
     # Check if the initial step size satisfies the Armijo condition
     φ_val = φ(α)
     
-    # Verificar se houve erro na avaliação
+    # Check if there was an error in evaluation
     if !result.success
         return result
     end
@@ -243,7 +243,7 @@ function BacktrackMO!(result::LineSearchResult{T}, φ::Function, φ_grad_0::Vect
 
         φ_val = φ(α)
         
-        # Verificar se houve erro na avaliação
+        # Check if there was an error in evaluation
         if !result.success
             return result
         end

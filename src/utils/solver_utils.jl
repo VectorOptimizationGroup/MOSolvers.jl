@@ -100,13 +100,13 @@ end
 """
     SubProblemParams
 
-Estrutura que armazena os parâmetros de um subproblema.
+Structure that stores the parameters of a subproblem.
 
-# Campos
-- `A::Vector{<:AbstractMatrix{T}}`: matrizes A do subproblema
-- `b::Vector{<:AbstractVector{T}}`: vetores b do subproblema
-- `lb::AbstractVector{T}`: limites inferiores das variáveis
-- `ub::AbstractVector{T}`: limites superiores das variáveis
+# Fields
+- `A::Vector{<:AbstractMatrix{T}}`: subproblem matrices A
+- `b::Vector{<:AbstractVector{T}}`: subproblem vectors b
+- `lb::AbstractVector{T}`: lower bounds of the variables
+- `ub::AbstractVector{T}`: upper bounds of the variables
 """
 struct SubProblemParams{T<:AbstractFloat}
     A::Vector{<:AbstractMatrix{T}}
@@ -114,21 +114,21 @@ struct SubProblemParams{T<:AbstractFloat}
     lb::AbstractVector{T}
     ub::AbstractVector{T}
     
-    # Construtor interno com validações
+    # Internal constructor with validations
     function SubProblemParams(A::Vector{<:AbstractMatrix{T}}, b::Vector{<:AbstractVector{T}}, lb::AbstractVector{T}, ub::AbstractVector{T}) where {T<:AbstractFloat}
-        # Validações básicas
-        @assert length(A) == length(b) "Número de matrizes A deve ser igual ao número de vetores b"
-        @assert length(lb) == length(ub) "Limites inferiores e superiores devem ter o mesmo tamanho"
+        # Basic validations
+        @assert length(A) == length(b) "Number of A matrices must equal number of b vectors"
+        @assert length(lb) == length(ub) "Lower and upper bounds must have the same size"
         
-        # Validação adicional: verificar se as dimensões são compatíveis
+        # Additional validation: check if dimensions are compatible
         if !isempty(A) && !isempty(b)
-            n_vars = size(A[1], 2)  # número de colunas da primeira matriz A
-            @assert length(lb) == n_vars "Dimensão dos limites deve ser igual ao número de variáveis"
-            @assert length(ub) == n_vars "Dimensão dos limites deve ser igual ao número de variáveis"
+            n_vars = size(A[1], 2)  # number of columns of the first matrix A
+            @assert length(lb) == n_vars "Dimension of bounds must equal number of variables"
+            @assert length(ub) == n_vars "Dimension of bounds must equal number of variables"
             
-            # Verificar se todas as matrizes A têm o mesmo número de colunas
+            # Check if all matrices A have the same number of columns
             for (i, A_i) in enumerate(A)
-                @assert size(A_i, 2) == n_vars "Todas as matrizes A devem ter o mesmo número de colunas (variáveis)"
+                @assert size(A_i, 2) == n_vars "All A matrices must have the same number of columns (variables)"
             end
         end
         
@@ -278,7 +278,7 @@ function evalh!(h::AbstractVector{T}, x::AbstractVector{T}, SubProbParams::SubPr
     return true, "All subproblems solved successfully"
 end
 
-# Função auxiliar para processar limites
+# Helper function to process bounds
 function process_bounds(bound, n::Int, default_value)
     if bound === nothing
         return fill(default_value, n)
@@ -336,43 +336,43 @@ function BFGS_update!(B::Vector{<:AbstractMatrix{T}}, n::Int, m::Int,
                      x::AbstractVector{T}, x_prev::AbstractVector{T}, 
                      JF::AbstractMatrix{T}, JF_prev::AbstractMatrix{T}) where {T<:AbstractFloat}
     
-    # Vetor s: diferença entre pontos consecutivos
+    # Vector s: difference between consecutive points
     s = x - x_prev
     
-    # Vetores temporários para cálculos intermediários
+    # Temporary buffers for intermediate calculations
     Bs = Vector{T}(undef, n)
     
-    # Atualiza as m matrizes BFGS (uma para cada função objetivo)
+    # Update the m BFGS matrices (one for each objective function)
     for j in 1:m
-        # Vetor y: diferença entre os gradientes consecutivos da função objetivo j
+        # Vector y: difference between consecutive gradients of objective function j
         y = JF[j,:] - JF_prev[j,:]
         
-        # Produto interno s'y (critério de curvatura)
+        # Inner product s'y (curvature criterion)
         s_dot_y = dot(s, y)
         
-        # Somente atualiza a matriz BFGS se s'y > 0 (condição de curvatura positiva)
+        # Only update the BFGS matrix if s'y > 0 (positive curvature condition)
         if s_dot_y > zero(T)
-            # Calcula B*s reusando o vetor Bs
+            # Compute B*s reusing the Bs buffer
             mul!(Bs, B[j], s)
             sBs = dot(s, Bs)
             
-            # Atualiza B[j] in-place usando a fórmula BFGS
+            # Update B[j] in-place using the BFGS formula
             for i in 1:n
                 for k in 1:n
                     B[j][i,k] -= (Bs[i] * Bs[k]) / sBs - (y[i] * y[k]) / s_dot_y
                 end
             end
         end
-        # Se s'y <= 0, não faz nada, mantendo B[j] inalterado
+        # If s'y <= 0, do nothing, keeping B[j] unchanged
     end
     
-    return B  # retorna as matrizes atualizadas para encadeamento de chamadas
+    return B  # returns the updated matrices for call chaining
 end
 
 
 """
-BFGS-like update para um *stack* de matrizes B[:, :, j], j=1..m (in-place).
-- Formatos esperados:
+BFGS-like update for a *stack* of matrices B[:, :, j], j=1..m (in-place).
+- Expected formats:
     length(x) = length(xprev) = n
     size(JF) = size(JFprev) = (m, n)
     size(B[j]) = (n, n) for all j
@@ -409,7 +409,7 @@ function bfgsupdate!(B::Vector{<:AbstractMatrix{T}}, x::AbstractVector{T},
         sTy  = dot(s, y)
         sTBs = dot(s, Bs)
 
-        # rho = Dxs - dot( linha, s )  -- garanta Vector:
+        # rho = Dxs - dot( row, s )  -- ensure Vector:
         rho = Dxs - dot(vec(ypi), s)
 
         if sTy > eps
@@ -538,9 +538,9 @@ end
 """
     noop_callback
 
-Callback padrão que não faz nada.
+Default callback that does nothing.
 """
 function noop_callback(args...)
-    # Não faz nada
+    # Does nothing
     return nothing
 end

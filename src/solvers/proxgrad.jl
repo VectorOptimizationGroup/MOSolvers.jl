@@ -60,30 +60,30 @@ function ProxGrad(evalf::Function, evalJf::Function, A::Vector{<:AbstractMatrix{
     A2n = [[A[i]; -A[i]] for i in 1:m]
     b2n = [delta * ones(2*n) for i in 1:m]
 
-    # Validações
-    @assert m > 0 "Pelo menos uma matriz A deve ser fornecida"
+    # Validations
+    @assert m > 0 "At least one matrix A must be provided"
 
     for i in 1:m
-        @assert size(A[i], 1) == n && size(A[i], 2) == n "A matriz A[$i] deve ser quadrada de tamanho $n×$n"
+        @assert size(A[i], 1) == n && size(A[i], 2) == n "Matrix A[$i] must be square of size $n×$n"
     end
 
-    # Processamento dos limites
+    # Process bounds
     lb_vec = process_bounds(lb, n, T(-Inf))
     ub_vec = process_bounds(ub, n, T(Inf))
 
-    # Verificar se lb <= ub
+    # Check if lb <= ub
     for i in 1:n
-        @assert lb_vec[i] <= ub_vec[i] "O limite inferior lb[$i] = $(lb_vec[i]) deve ser menor ou igual ao limite superior ub[$i] = $(ub_vec[i])"
+        @assert lb_vec[i] <= ub_vec[i] "Lower bound lb[$i] = $(lb_vec[i]) must be less than or equal to upper bound ub[$i] = $(ub_vec[i])"
     end
 
-    # Verificar se x0 está dentro dos limites
+    # Check if x0 is within bounds
     for i in 1:n
         if !(lb_vec[i] <= x0[i] <= ub_vec[i])
-            @warn "x0[$i] = $(x0[i]) está fora dos limites [$(lb_vec[i]), $(ub_vec[i])]"
+            @warn "x0[$i] = $(x0[i]) is out of bounds [$(lb_vec[i]), $(ub_vec[i])]"
         end
     end
 
-    # Criar a estrutura internamente
+    # Create the structure internally
     SubProbParams = SubProblemParams(A2n, b2n, lb_vec, ub_vec)
 
     # Create result structure
@@ -152,7 +152,7 @@ end
 """
     _ProxGrad_optimize!(f!, Jf!, h!, x0, options, callback, result)
 
-Função interna que implementa o algoritmo ProxGrad.
+Internal function that implements the ProxGrad algorithm.
 """
 function _ProxGrad_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::Function, m::Int, subproblem::Function, options::ProxGradParams, callback::Function)
     
@@ -170,7 +170,7 @@ function _ProxGrad_optimize!(result::OptimResult, f!::Function, Jf!::Function, h
     h_ls  = zeros(T, m)
     F_ls  = zeros(T, m)
 
-    # Início da contagem de tempo para verificação de tempo máximo
+    # Start timing to check for maximum time
     start_time = time()
 
     # Define the composite objective function F(y) = f(y) + h(y) (in-place)
@@ -203,7 +203,7 @@ function _ProxGrad_optimize!(result::OptimResult, f!::Function, Jf!::Function, h
     Jf!(JF, x)
     h!(h, x)
 
-    # Verificar se h! falhou
+    # Check if h! failed
     if !result.success
         return result
     end
@@ -254,7 +254,7 @@ function _ProxGrad_optimize!(result::OptimResult, f!::Function, Jf!::Function, h
         # Compute the step size
         line_search_result = armijo(F, x, d, result.Fval, JF, factor=-abs(theta))
         
-        # Se a busca linear falhou devido a um erro em F, a mensagem já foi atualizada
+        # If line search failed due to an error in F, the message has already been updated
         if !line_search_result.success
             result.message = line_search_result.message
             result.success = false
@@ -269,7 +269,7 @@ function _ProxGrad_optimize!(result::OptimResult, f!::Function, Jf!::Function, h
         # Compute F and JF
         f!(Fx, x)
         Jf!(JF, x)
-        # Reduz o custo de chamar h!: h .= F_final - Fx (in-place)
+        # Reduces the cost of calling h!: h .= F_final - Fx (in-place)
         h .= line_search_result.F_final
         h .-= Fx
 
