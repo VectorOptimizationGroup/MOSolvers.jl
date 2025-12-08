@@ -9,6 +9,7 @@ module MOSolvers
     # Include auxiliary functions
     include("utils/solver_utils.jl")
     include("utils/linesearch.jl")
+    include("utils/evalh.jl")
 
     # Include subproblems
     include("subproblems/subproblem_condg.jl")
