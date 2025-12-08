@@ -444,17 +444,6 @@ function jacobian_finite_diff!(J::AbstractMatrix{T}, f!::Function, x::AbstractVe
     return J
 end
 
-"""
-    jacobian_finite_diff(f!, x, m; method=:central, λ=sqrt(eps(T)))
-
-Allocate and return a new Jacobian (kept for compatibility). Prefer `jacobian_finite_diff!`.
-"""
-function jacobian_finite_diff(f!::Function, x::AbstractVector{T}, m::Int; method::Symbol=:central, λ::T=sqrt(eps(T))) where {T<:AbstractFloat}
-    n = length(x)
-    J = zeros(T, m, n)
-    return jacobian_finite_diff!(J, f!, x; method=method, λ=λ)
-end
-
 #TODO: Use this function to check if the subproblem is feasible# Optional: Presolve function to check problem feasibility
 function check_subproblem_feasibility(x::AbstractVector{T}, SubProbParams::SubProblemParams) where {T<:AbstractFloat}
     n = length(x)
