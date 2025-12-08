@@ -444,31 +444,6 @@ function jacobian_finite_diff!(J::AbstractMatrix{T}, f!::Function, x::AbstractVe
     return J
 end
 
-#TODO: Use this function to check if the subproblem is feasible# Optional: Presolve function to check problem feasibility
-function check_subproblem_feasibility(x::AbstractVector{T}, SubProbParams::SubProblemParams) where {T<:AbstractFloat}
-    n = length(x)
-    
-    # Check if x is within bounds
-    if any(x .< SubProbParams.lb) || any(x .> SubProbParams.ub)
-        return false, "Initial point violates bounds"
-    end
-    
-    # Check if constraint system has a solution
-    for A in SubProbParams.A
-        if size(A, 2) != n
-            return false, "Dimension mismatch in constraint matrix"
-        end
-    end
-    
-    return true, "Problem appears feasible"
-end
-
-# Optional: Helper function to create a solver cache
-function create_pdfpm_cache(::Type{T}) where {T<:AbstractFloat}
-    model = Model(Ipopt.Optimizer)
-    return model
-end
-
 """
     noop_callback
 
