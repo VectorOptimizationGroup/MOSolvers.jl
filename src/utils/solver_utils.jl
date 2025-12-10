@@ -1,5 +1,5 @@
 """
-    OptimResult{T<:AbstractFloat}
+    mutable struct OptimResult{T<:AbstractFloat}
 
 Container structure holding the results produced by an optimization solver.
 
@@ -42,6 +42,11 @@ mutable struct OptimResult{T<:AbstractFloat}
     message::String
 end
 
+"""
+    OptimResult(x0, Fval)
+
+Construct an initial `OptimResult` with starting values.
+"""
 function OptimResult(x0::AbstractVector{T}, Fval::AbstractVector{T}) where {T<:AbstractFloat}
     return OptimResult{T}(
         copy(x0),               # x
@@ -63,6 +68,19 @@ function OptimResult(x0::AbstractVector{T}, Fval::AbstractVector{T}) where {T<:A
         "Optimization not started")  # message
 end
 
+"""
+    update!(result; kw...)
+
+Update the `OptimResult` fields in-place.
+
+# Keywords
+- `x`: New iterate.
+- `Fval`: New objective value.
+- `abs_theta`: New optimality measure.
+- `norm_progress`: New progress measure.
+- `iter`: New iteration count.
+- `store_trace`: If `true`, appends `x`, `Fval`, `abs_theta`, etc. to trace history.
+"""
 function update!(result::OptimResult{T}; x=nothing, Fval=nothing, abs_theta=nothing, norm_progress=nothing, iter=nothing, store_trace=false) where {T<:AbstractFloat}
     if x !== nothing
         result.x .= x
@@ -98,15 +116,15 @@ function update!(result::OptimResult{T}; x=nothing, Fval=nothing, abs_theta=noth
 end
 
 """
-    SubProblemParams
+    struct SubProblemParams{T<:AbstractFloat}
 
 Structure that stores the parameters of a subproblem.
 
 # Fields
-- `A::Vector{<:AbstractMatrix{T}}`: subproblem matrices A
-- `b::Vector{<:AbstractVector{T}}`: subproblem vectors b
-- `lb::AbstractVector{T}`: lower bounds of the variables
-- `ub::AbstractVector{T}`: upper bounds of the variables
+- `A::Vector{<:AbstractMatrix{T}}`: subproblem matrices `A`.
+- `b::Vector{<:AbstractVector{T}}`: subproblem vectors `b`.
+- `lb::AbstractVector{T}`: lower bounds of the variables.
+- `ub::AbstractVector{T}`: upper bounds of the variables.
 """
 struct SubProblemParams{T<:AbstractFloat}
     A::Vector{<:AbstractMatrix{T}}
@@ -138,7 +156,11 @@ end
 
 
 
-# Helper function to process bounds
+"""
+    process_bounds(bound, n, default_value)
+
+Helper function to expand scalar or `nothing` bounds into a vector of length `n`.
+"""
 function process_bounds(bound, n::Int, default_value)
     if bound === nothing
         return fill(default_value, n)
@@ -150,6 +172,12 @@ function process_bounds(bound, n::Int, default_value)
     end
 end
 
+"""
+    print_table(result)
+
+Print a formatted status row for the current iteration logic.
+Handles the header for the first iteration (`iter == 0`).
+"""
 function print_table(result::OptimResult)
     if result.iter == 0
         separator = "-"^70
@@ -176,11 +204,20 @@ function print_table(result::OptimResult)
 end
 
 """
-BFGS-like update for a *stack* of matrices B[:, :, j], j=1..m (in-place).
-- Expected formats:
-    length(x) = length(xprev) = n
-    size(JF) = size(JFprev) = (m, n)
-    size(B[j]) = (n, n) for all j
+    bfgsupdate!(B, x, xprev, JF, JFprev, theta)
+
+Perform a BFGS-like update in-place for a stack of matrices `B` (one for each objective).
+
+Updates `B[j]` using the variation in `x` and the Jacobian `JF`.
+The update is safeguarded to maintain positive definiteness where applicable.
+
+# Arguments
+- `B`: Vector of matrices `B_j`.
+- `x`: Current point.
+- `xprev`: Previous point.
+- `JF`: Current Jacobian.
+- `JFprev`: Previous Jacobian.
+- `theta`: Optimality measure (used for scaling/safeguards).
 """
 function bfgsupdate!(B::Vector{<:AbstractMatrix{T}}, x::AbstractVector{T},
                      xprev::AbstractVector{T},
@@ -240,15 +277,15 @@ end
 
 Fill the Jacobian `J` in-place using finite differences.
 
-# Arguments:
-- `J::AbstractMatrix{T}`: Preallocated output Jacobian (m × n)
-- `f!::Function`: Function to evaluate the objective f(x): R^n -> R^m
-- `x::AbstractVector{T}`: Point where the Jacobian will be evaluated
-- `method::Symbol`: Finite difference method (:forward, :backward, :central)
-- `λ::T`: Step size for finite differences
+# Arguments
+- `J::AbstractMatrix{T}`: Preallocated output Jacobian (m × n).
+- `f!::Function`: Function to evaluate the objective `f(x) -> y`.
+- `x::AbstractVector{T}`: Point where the Jacobian will be evaluated.
+- `method::Symbol`: Finite difference method (`:forward`, `:backward`, `:central`).
+- `λ::T`: Step size for finite differences.
 
-# Returns:
-- `J` (the same matrix, filled in place)
+# Returns
+- `J`: The same matrix, filled in place.
 """
 function jacobian_finite_diff!(J::AbstractMatrix{T}, f!::Function, x::AbstractVector{T}; method::Symbol=:central, λ::T=sqrt(eps(T))) where {T<:AbstractFloat}
     # Dimensions
@@ -305,9 +342,10 @@ function jacobian_finite_diff!(J::AbstractMatrix{T}, f!::Function, x::AbstractVe
 end
 
 """
-    noop_callback
+    noop_callback(args...)
 
 Default callback that does nothing.
+Returns `nothing`.
 """
 function noop_callback(args...)
     # Does nothing

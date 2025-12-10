@@ -28,6 +28,21 @@ See the following references for more details about choosing the ANYTHING(x) fun
       Optimization, 74(2), 473–503.
 """
 
+"""
+    mutable struct ArmijoParams{T<:AbstractFloat}
+
+Parameters for the Armijo line search.
+
+# Fields
+- `verbose::Integer`: Verbosity level (0: none, 1: info).
+- `max_iter::Int`: Maximum number of backtracking iterations.
+- `rho::T`: Sufficient decrease factor (0 < rho < 1).
+- `alpha_init::T`: Initial step size.
+- `alpha_max::T`: Maximum allowed step size.
+- `alpha_min::T`: Minimum allowed step size.
+- `print_interval::Int`: Interval for printing progress (if verbose).
+- `store_trace::Bool`: Whether to store trace information (not fully used in simple backtracking).
+"""
 mutable struct ArmijoParams{T<:AbstractFloat}
     verbose::Integer # Verbose level
     max_iter::Int # Maximum number of iterations
@@ -39,6 +54,21 @@ mutable struct ArmijoParams{T<:AbstractFloat}
     store_trace::Bool # Store trace 
 end
 
+"""
+    ArmijoParams(; kw...)
+
+Construct `ArmijoParams` with validated defaults.
+
+# Keywords
+- `verbose::Integer=0`: Verbose level.
+- `max_iter::Integer=1000`: Max iterations.
+- `rho::Real=1e-4`: Sufficient decrease factor.
+- `alpha_init::Real=1.0`: Initial step size.
+- `alpha_max::Real=1.0`: Max step size.
+- `alpha_min::Real=1e-15`: Min step size.
+- `print_interval::Integer=10`: Print interval.
+- `store_trace::Bool=false`: Store trace.
+"""
 function ArmijoParams(; verbose=0, max_iter=1000, rho=1e-4, alpha_init=1.0, alpha_max=1.0, alpha_min=1e-15, print_interval=10, store_trace=false)
 
     if rho <= 0
@@ -57,6 +87,18 @@ function ArmijoParams(; verbose=0, max_iter=1000, rho=1e-4, alpha_init=1.0, alph
     return ArmijoParams(verbose, max_iter, rho, alpha_init, alpha_max, alpha_min, print_interval, store_trace)
 end
 
+"""
+    mutable struct LineSearchResult{T<:AbstractFloat}
+
+Result of a line search procedure.
+
+# Fields
+- `stp::T`: Accepted step size.
+- `F_final::AbstractVector{T}`: Function value at the accepted step.
+- `nfev::Integer`: Number of function evaluations performed.
+- `success::Bool`: `true` if the line search converged.
+- `message::String`: Status message.
+"""
 mutable struct LineSearchResult{T<:AbstractFloat}
     stp::T # Step size
     F_final::AbstractVector{T} # Final function value
@@ -72,12 +114,24 @@ end
 """
     armijo(F, x, d, Fx, Jfx; factor=nothing, options=ArmijoParams())
 
-Multiobjective Armijo backtracking line-search.
+Perform a Multiobjective Armijo backtracking line search.
 
-- `F(y)` must return `(F_val::AbstractVector{T}, nothing)` on success or `(nothing, msg::String)` on failure.
-- `factor` can be:
-    - `nothing` → uses `maximum(Jfx*d)` (scalar) as the Armijo slope surrogate;
-    - a scalar (e.g. `-abs(theta)`).
+Finds a step size `α` such that:
+`F_i(x + α d) ≤ F_i(x) + ρ * α * factor` for all `i`.
+
+# Arguments
+- `F::Function`: Objective function `F(x)`. Must return `(value, error_msg)`.
+- `x::AbstractVector`: Current point.
+- `d::AbstractVector`: Descent direction.
+- `Fx::AbstractVector`: Value of `F` at `x`.
+- `Jfx::AbstractMatrix`: Jacobian of `F` at `x` (used if `factor` is nothing).
+
+# Keywords
+- `factor::Union{Real, Nothing}`: The term used in the sufficient decrease condition.
+    - If `nothing`, uses `maximum(Jfx * d)`.
+    - Can be a scalar (e.g., `-abs(θ)` from a subproblem).
+- `options::ArmijoParams`: Line search parameters.
+
 """
 function armijo(F::Function, x::AbstractVector{T}, d::AbstractVector{T}, Fx::AbstractVector{T},
                 Jfx::AbstractMatrix{T}; factor::Union{T,Nothing}=nothing,
@@ -137,6 +191,14 @@ function armijo(F::Function, x::AbstractVector{T}, d::AbstractVector{T}, Fx::Abs
     return result
 end
 
+"""
+    safeguarded_backtrack(α, φ, φ_grad_0, φ_0; τ₁=0.05, τ₂=0.95)
+
+Calculate a new step size via quadratic interpolation with safeguards.
+
+Models `φ(α)` as a quadratic `q(α)` matched at `α=0` and `α=current`.
+Result is clamped to `[τ₁ * α, τ₂ * α]` to ensure robust decrease.
+"""
 function safeguarded_backtrack(α::T, φ::T, φ_grad_0::T, φ_0::T; τ₁::T=0.05, τ₂::T=0.95) where {T<:AbstractFloat}
 
     """
@@ -196,6 +258,12 @@ function safeguarded_backtrack(α::T, φ::T, φ_grad_0::T, φ_0::T; τ₁::T=0.0
     return α
 end
 
+"""
+    BacktrackMO!(result, φ, φ_grad_0, φ_0, factor, options)
+
+Execute backtracking loop to satisfy the Armijo condition.
+Updates `result` in place.
+"""
 function BacktrackMO!(result::LineSearchResult{T}, φ::Function, φ_grad_0::Vector{T}, φ_0::Vector{T}, factor::T, options::ArmijoParams) where {T<:AbstractFloat}
 
     if options.verbose >= 1
