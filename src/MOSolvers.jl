@@ -1,3 +1,19 @@
+"""
+    MOSolvers
+
+A package for Multi-Objective Optimization using descent methods.
+
+# Solvers
+- [`CondG`]: Conditional Gradient Method.
+- [`ProxGrad`]: Proximal Gradient Method.
+- [`PDFPM`]: Partially Derivative-Free Proximal Method.
+
+# Configuration
+Each solver has a corresponding options constructor:
+- [`CondG_options`]
+- [`ProxGrad_options`]
+- [`PDFPM_options`]
+"""
 module MOSolvers
 
     using NLPModels
