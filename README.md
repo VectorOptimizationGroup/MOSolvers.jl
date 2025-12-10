@@ -22,6 +22,11 @@ import Pkg
 Pkg.add(url="https://github.com/VectorOptimizationGroup/MOSolvers.jl")
 ```
 
+## Problem Classes
+
+These solvers are specialized for composite problems of the form $F(x) = f(x) + h(x)$, where $h(x)$ has a specific max-linear structure.
+For a detailed mathematical description of the problems solved, please see [Solvers and Problem Structure](src/solvers/README.md).
+
 ## Usage Example
 
 Here is a basic example of how to solve a multi-objective problem (BK1) using the Partially Derivative-Free Proximal Method (PDFPM) solver.
