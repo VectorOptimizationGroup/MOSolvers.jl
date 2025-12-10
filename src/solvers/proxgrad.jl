@@ -1,3 +1,19 @@
+"""
+    mutable struct ProxGradParams{T<:AbstractFloat}
+
+Parameters for the Proximal Gradient solver.
+
+# Fields
+- `verbose::Integer`: Verbose level (0: none, 1: normal, 2: detailed).
+- `max_iter::Integer`: Maximum number of iterations.
+- `opt_tol::T`: Optimality tolerance (convergence criterion).
+- `ftol::T`: Function tolerance (convergence criterion).
+- `max_time::T`: Maximum execution time in seconds.
+- `print_interval::Integer`: Interval for printing progress (in iterations).
+- `stop_criteria::Symbol`: Additional stopping criteria (`:proxgrad` or `:NormProgress`).
+- `store_trace::Bool`: Whether to store the trace of iterates `x` during optimization.
+- `mu::T`: Proximal parameter μ.
+"""
 mutable struct ProxGradParams{T<:AbstractFloat}
     verbose::Integer # Verbose level
     max_iter::Integer # Maximum number of iterations
@@ -11,19 +27,24 @@ mutable struct ProxGradParams{T<:AbstractFloat}
 end
 
 
-"""	
-    ProxGrad_options(; verbose::Integer = 1, max_iter::Integer = 1000, opt_tol::T = 1e-4, ftol::T = 1e-4, max_time::T = 3600.0, print_interval::Integer = 10, store_trace::Bool = false, mu::T = 1.0)
+"""
+    ProxGrad_options(; kw...)
 
-# Arguments:
-# - `verbose::Integer = 1`: Verbose level (0: none, 1: normal, 2: detailed)
-# - `max_iter::Integer = 1000`: Maximum number of iterations
-# - `opt_tol::T = 1e-4`: Optimality tolerance
-# - `ftol::T = 1e-4`: Function tolerance
-# - `max_time::T = 3600.0`: Maximum time in seconds
-# - `print_interval::Integer = 10`: Print interval
-# - `stop_criteria::Symbol = :proxgrad`:  Additional stop criteria (:proxgrad, :NormProgress)
-# - `store_trace::Bool = false`: Whether to store the trace of x during optimization
-# - `mu::T = 1.0`: Proximal parameter
+Create a `ProxGradParams` structure with default or specified values.
+
+# Keywords
+- `verbose::Integer = 1`: Verbose level (0: none, 1: normal, 2: detailed).
+- `max_iter::Integer = 1000`: Maximum number of iterations.
+- `opt_tol::T = 1e-4`: Optimality tolerance.
+- `ftol::T = 1e-4`: Function tolerance.
+- `max_time::T = 3600.0`: Maximum time in seconds.
+- `print_interval::Integer = 10`: Print interval.
+- `stop_criteria::Symbol = :proxgrad`: Additional stopping criteria (`:proxgrad` or `:NormProgress`).
+- `store_trace::Bool = false`: Whether to store the trace of `x` during optimization.
+- `mu::T = 1.0`: Proximal parameter μ.
+
+# Returns
+- `ProxGradParams`: A parameter structure for the ProxGrad solver.
 """
 function ProxGrad_options(; verbose=1, max_iter=1000, opt_tol=1e-4, ftol=1e-4, max_time=3600.0, print_interval=10, stop_criteria=:proxgrad, store_trace=false, mu=1.0)
     if stop_criteria ∉ [:NormProgress, :proxgrad]
@@ -33,18 +54,31 @@ function ProxGrad_options(; verbose=1, max_iter=1000, opt_tol=1e-4, ftol=1e-4, m
 end
 
 """
-    ProxGrad(evalf::Function, evalJf::Function, A::Vector{<:AbstractMatrix{T}}, delta::T, x0::AbstractVector{T}, options::ProxGradParams=ProxGrad_options(); lb::Union{Nothing,AbstractVector{T},Number}=nothing, ub::Union{Nothing,AbstractVector{T},Number}=nothing, callback=noop_callback) where {T<:AbstractFloat}
+    ProxGrad(evalf, evalJf, A, delta, x0, options; lb=nothing, ub=nothing, callback=noop_callback)
 
-# Arguments:
-# - `evalf::Function`: Function to evaluate the objective function f(x): R^n -> R^m
-# - `evalJf::Function`: Function to evaluate the Jacobian of the objective function Jf(x): R^n -> R^{m×n}
-# - `A::Vector{<:AbstractMatrix{T}}`: Vector of matrices A for each objective
-# - `delta::T`: Uncertainty parameter
-# - `x0::AbstractVector{T}`: Initial guess
-# - `options::ProxGradParams=ProxGrad_options()`: Options for the ProxGrad solver
-# - `lb::Union{Nothing,AbstractVector{T},Number}=nothing`: Lower bounds
-# - `ub::Union{Nothing,AbstractVector{T},Number}=nothing`: Upper bounds
-# - `callback::Function=noop_callback`: Optional hook executed every iteration, with signature `callback(iter, result) -> Bool`. Return `true` to stop; any other value continues. Use for logging or custom stopping rules.
+Solve a composite multi-objective optimization problem using the Proximal Gradient method.
+
+The problem is defined as:
+    min_{x ∈ Ω} F(x) = f(x) + h(x)
+
+where f: R^n -> R^m is a smooth vector-valued function, and h: R^n -> R^m is a convex function defined as:
+    h_j(x) = max{<x,z> | z ∈ Z_j},   Z_j = { z ∈ R^n | -δ e ≤ A_j z ≤ δ e }
+
+# Arguments
+- `evalf::Function`: Evaluate the objective function f(x).
+- `evalJf::Function`: Evaluate the Jacobian of the objective function Jf(x).
+- `A::Vector{<:AbstractMatrix}`: A vector of matrices defining the sets Z_j.
+- `delta::Real`: The scaling parameter δ for the sets Z_j.
+- `x0::AbstractVector`: Initial guess.
+- `options::ProxGradParams`: Options for the solver (see [`ProxGrad_options`]).
+
+# Keywords
+- `lb::Union{Nothing, AbstractVector, Number}`: Lower bounds on variables.
+- `ub::Union{Nothing, AbstractVector, Number}`: Upper bounds on variables.
+- `callback::Function`: Optional callback executed every iteration, signature `callback(iter, result) -> Bool`. Return `true` to stop.
+
+# Returns
+- `result::OptimResult`: Optimization result containing solution `x`, objective values `Fval`, and other statistics.
 """
 
 function ProxGrad(evalf::Function, evalJf::Function, A::Vector{<:AbstractMatrix{T}}, delta::T, 

@@ -1,3 +1,24 @@
+"""
+    mutable struct PDFPMParams{T<:AbstractFloat}
+
+Parameters for the Partially Derivative-Free Proximal Method (PDFPM) solver.
+
+# Fields
+- `verbose::Integer`: Verbose level (0: none, 1: normal, 2: detailed).
+- `max_iter::Integer`: Maximum number of iterations.
+- `opt_tol::T`: Optimality tolerance (convergence criterion).
+- `ftol::T`: Function tolerance (convergence criterion).
+- `max_time::T`: Maximum execution time in seconds.
+- `print_interval::Integer`: Interval for printing progress (in iterations).
+- `stop_criteria::Symbol`: Additional stopping criteria (`:pdfpm` or `:NormProgress`).
+- `store_trace::Bool`: Whether to store the trace of iterates `x` during optimization.
+- `epsilon::T`: Tolerance parameter ε for the subproblem.
+- `sigma::T`: Regularization parameter σ.
+- `alpha::T`: Parameter α for sufficient decrease condition.
+- `max_subproblem_iter::Integer`: Maximum number of iterations for the subproblem.
+- `lambda_factor::Union{Function, T}`: Factor to determine the finite difference parameters.
+- `lambda_min::T`: Minimum value for the finite difference parameter λ.
+"""
 mutable struct PDFPMParams{T<:AbstractFloat}
     verbose::Integer # Verbose level
     max_iter::Integer # Maximum number of iterations
@@ -16,29 +37,29 @@ mutable struct PDFPMParams{T<:AbstractFloat}
 end
 
 
-"""	
-    PDFPM_options(; verbose::Integer = 1, max_iter::Integer = 1000, opt_tol::T = 1e-4, ftol::T = 1e-4, max_time::T = 3600.0, print_interval::Integer = 10, store_trace::Bool = false, epsilon::T = 1e-10, sigma::T = 1.0, alpha::T = 0.1, max_subproblem_iter::Integer = 200, lambda_factor::T = 0.1, lambda_min::T = 1e-12)
+"""
+    PDFPM_options(; kw...)
 
-# Arguments:
-# - `verbose::Integer = 1`: Verbose level (0: none, 1: normal, 2: detailed)
-# - `max_iter::Integer = 1000`: Maximum number of iterations
-# - `opt_tol::T = 1e-4`: Optimality tolerance
-# - `ftol::T = 1e-4`: Function tolerance
-# - `max_time::T = 3600.0`: Maximum time in seconds
-# - `print_interval::Integer = 10`: Print interval
-# - `stop_criteria::Symbol = :pdfpm`:  Additional stop criteria (:condg, :proxgrad, :pdfpm)
-# - `store_trace::Bool = false`: Whether to store the trace of x during optimization
-# - `epsilon::T = 1e-10`: Epsilon parameter for finite differences
-# - `sigma::T = 1.0`: Sigma parameter for regularization
-# - `alpha::T = 0.1`: Alpha parameter for sufficient decrease
-# - `max_subproblem_iter::Integer = 200`: Maximum subproblem iterations
-# - `lambda_factor::Union{T,Function} = 0.1`: If a number, it is clamped to [0,1] and used as a percentage of the interval [0, ϵ/(σ√n)] to define λ via
-#     λ = max(lambda_factor * ϵ/(σ√n), λ_min).
-#   If a function, it is evaluated at runtime (per iteration) and should return a number in [0,1].
-#   Recommended function signature:
-#     lambda_factor(; iter, sigma, n) -> Real in [0,1]
-#   Current implementation calls it at least with `iter` as keyword: lambda_factor(; iter=iter).
-# - `lambda_min::T = 1e-12`: Minimum lambda for finite differences (λ is floored by this value).
+Create a `PDFPMParams` structure with default or specified values.
+
+# Keywords
+- `verbose::Integer = 1`: Verbose level (0: none, 1: normal, 2: detailed).
+- `max_iter::Integer = 1000`: Maximum number of iterations.
+- `opt_tol::T = 1e-4`: Optimality tolerance.
+- `ftol::T = 1e-4`: Function tolerance.
+- `max_time::T = 3600.0`: Maximum time in seconds.
+- `print_interval::Integer = 10`: Print interval.
+- `stop_criteria::Symbol = :pdfpm`: Additional stopping criteria (`:pdfpm` or `:NormProgress`).
+- `store_trace::Bool = false`: Whether to store the trace of `x` during optimization.
+- `epsilon::T = 1e-10`: Tolerance parameter ε.
+- `sigma::T = 1.0`: Regularization parameter σ.
+- `alpha::T = 0.1`: Parameter α for sufficient decrease.
+- `max_subproblem_iter::Integer = 200`: Maximum subproblem iterations.
+- `lambda_factor::Union{T,Function} = 0.1`: Factor to determine finite difference step.
+- `lambda_min::T = 1e-12`: Minimum finite difference step λ.
+
+# Returns
+- `PDFPMParams`: A parameter structure for the PDFPM solver.
 """
 function PDFPM_options(; verbose=1, max_iter=1000, opt_tol=1e-4, ftol=1e-4, max_time=3600.0, print_interval=10, stop_criteria=:pdfpm, store_trace=false, epsilon=1e-10, sigma=1.0, alpha=0.1, max_subproblem_iter=200, lambda_factor=0.1, lambda_min=1e-12)
     if stop_criteria ∉ [:pdfpm, :NormProgress]
@@ -64,18 +85,33 @@ function PDFPM_options(; verbose=1, max_iter=1000, opt_tol=1e-4, ftol=1e-4, max_
 end
 
 """
-    PDFPM(evalf::Function, A::Vector{<:AbstractMatrix{T}}, delta::T, x0::AbstractVector{T}, options::PDFPMParams=PDFPM_options(); evalJf::Union{Nothing,Function}=nothing, lb::Union{Nothing,AbstractVector{T},Number}=nothing, ub::Union{Nothing,AbstractVector{T},Number}=nothing, callback=noop_callback) where {T<:AbstractFloat}
+    PDFPM(evalf, A, delta, x0, options; evalJf=nothing, lb=nothing, ub=nothing, callback=noop_callback)
 
-# Arguments:
-# - `evalf::Function`: Function to evaluate the objective function f(x): R^n -> R^m
-# - `A::Vector{<:AbstractMatrix{T}}`: Vector of matrices A for each objective
-# - `delta::T`: Uncertainty parameter
-# - `x0::AbstractVector{T}`: Initial guess
-# - `options::PDFPMParams=PDFPM_options()`: Options for the PDFPM solver
-# - `evalJf::Union{Nothing,Function}=nothing`: Function to evaluate the Jacobian of the objective function Jf(x): R^n -> R^{m×n} (optional, uses finite differences if not provided)
-# - `lb::Union{Nothing,AbstractVector{T},Number}=nothing`: Lower bounds
-# - `ub::Union{Nothing,AbstractVector{T},Number}=nothing`: Upper bounds
-# - `callback::Function=noop_callback`: Optional hook executed every iteration, with signature `callback(iter, result) -> Bool`. Return `true` to stop; any other value continues. Use for logging or custom stopping rules.
+Solve a composite multi-objective optimization problem using the Partially Derivative-Free Proximal Method (PDFPM).
+
+The problem is defined as:
+    min_{x ∈ Ω} F(x) = f(x) + h(x)
+
+where f: R^n -> R^m is a smooth vector-valued function, and h: R^n -> R^m is a convex function defined as:
+    h_j(x) = max{<x,z> | z ∈ Z_j},   Z_j = { z ∈ R^n | -δ e ≤ A_j z ≤ δ e }
+
+This method can use finite differences if the Jacobian `evalJf` is not provided.
+
+# Arguments
+- `evalf::Function`: Evaluate the objective function f(x).
+- `A::Vector{<:AbstractMatrix}`: A vector of matrices defining the sets Z_j.
+- `delta::Real`: The scaling parameter δ for the sets Z_j.
+- `x0::AbstractVector`: Initial guess.
+- `options::PDFPMParams`: Options for the solver (see [`PDFPM_options`]).
+
+# Keywords
+- `evalJf::Union{Nothing, Function}`: Evaluate the Jacobian Jf(x). If `nothing`, finite differences are used.
+- `lb::Union{Nothing, AbstractVector, Number}`: Lower bounds on variables.
+- `ub::Union{Nothing, AbstractVector, Number}`: Upper bounds on variables.
+- `callback::Function`: Optional callback executed every iteration, signature `callback(iter, result) -> Bool`. Return `true` to stop.
+
+# Returns
+- `result::OptimResult`: Optimization result containing solution `x`, objective values `Fval`, and other statistics.
 """
 
 function PDFPM(evalf::Function, A::Vector{<:AbstractMatrix{T}}, delta::T, 
