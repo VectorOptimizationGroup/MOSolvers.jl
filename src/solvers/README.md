@@ -19,7 +19,8 @@ $$
 h_j(x) = \max \{ \langle x, z \rangle \mid z \in Z_j \}
 $$
 
-In the current implementation, the set $Z_j$ is defined by: 
+In the current implementation, the set $Z_j$ is defined by:
+ 
 $$
 Z_j = \{ z \in \mathbb{R}^n \mid -\delta e \leq A_j z \leq \delta e \}.
 $$
