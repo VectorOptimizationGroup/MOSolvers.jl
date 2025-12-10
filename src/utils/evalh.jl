@@ -16,11 +16,15 @@ end
 const _EVALH_LIMITS = Base.RefValue{_HiGHSLimits}(_HiGHSLimits(nothing, nothing, nothing, nothing))
 
 """
-    set_evalh_highs_limits!(; time_limit=nothing, simplex_iteration_limit=nothing, ipm_iteration_limit=nothing, output_flag=nothing)
+    set_evalh_highs_limits!(; kw...)
 
 Configure resource limits for HiGHS models used by `evalh!`.
 
-All arguments are optional. Pass `nothing` to keep unset.
+# Keywords
+- `time_limit::Union{Nothing, Real}`: Time limit in seconds.
+- `simplex_iteration_limit::Union{Nothing, Integer}`: Max simplex iterations.
+- `ipm_iteration_limit::Union{Nothing, Integer}`: Max IPM iterations.
+- `output_flag::Union{Nothing, Bool}`: Whether to output solver logs (`true` or `false`).
 """
 function set_evalh_highs_limits!(; time_limit::Union{Nothing, Real}=nothing,
                                     simplex_iteration_limit::Union{Nothing, Integer}=nothing,
@@ -73,13 +77,34 @@ end
     clear_evalh_cache!()
 
 Clear the cached HiGHS models used by `evalh!`.
-Useful to release memory between runs with different problems.
+
+This is useful to release memory between runs with different problems.
 """
 function clear_evalh_cache!()
     empty!(_EVALH_MODEL_CACHE)
     return nothing
 end
 
+"""
+    evalh!(h, x, SubProbParams)
+
+Compute the value of the convex function `h(x)` in-place.
+
+The function `h(x)` is defined component-wise as:
+    h_j(x) = max { <x, z> | A_j z ≤ b_j }
+
+This involves solving a linear programming problem for each component `j`.
+Numerical issues (e.g., unboundedness) or solver failures are reported.
+
+# Arguments
+- `h::AbstractVector`: Output vector where the values `h_j(x)` will be stored.
+- `x::AbstractVector`: Point at which to evaluate `h`.
+- `SubProbParams::SubProblemParams`: Structure containing problem data `A` and `b`.
+
+# Returns
+- `success::Bool`: `true` if all subproblems were solved successfully, `false` otherwise.
+- `message::String`: Status message or error description.
+"""
 function evalh!(h::AbstractVector{T}, x::AbstractVector{T}, SubProbParams::SubProblemParams) where {T<:AbstractFloat}
 
     n = length(x)
