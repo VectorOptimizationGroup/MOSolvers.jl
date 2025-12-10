@@ -16,13 +16,13 @@ where:
 The solvers in this package are optimized for a specific case. We assume that each component $h_j(x)$ of the function $h(x)$ is defined as the maximum of a linear product over a compact set:
 
 $$
-h_j(x) = \max \{ \langle x, z \rangle \mid z \in Z_j \}
+h_j(x) = \max { \langle x, z \rangle \mid z \in Z_j }
 $$
 
 In the current implementation, the set $Z_j$ is defined by:
  
 $$
-Z_j = \{ z \in \mathbb{R}^n \mid -\delta e \leq A_j z \leq \delta e \}.
+Z_j = { z \in \mathbb{R}^n \mid -\delta e \leq A_j z \leq \delta e }.
 $$
 
 ### User Inputs
