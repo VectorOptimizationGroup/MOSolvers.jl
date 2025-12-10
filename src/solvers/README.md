@@ -36,6 +36,6 @@ The evaluation of this structure is handled in `src/utils/evalh.jl`.
 
 ## Available Solvers
 
-1.  **CondG (Conditional Gradient)**: Suitable when the domain $\Omega$ is compact. It avoids full projection steps by solving linear subproblems.
-2.  **ProxGrad (Proximal Gradient)**: generalization of the classic gradient descent, using the proximal operator to handle the non-smooth term.
-3.  **PDFPM (Partially Derivative-Free Proximal Method)**: A variation that estimates gradients via finite differences, useful when $\nabla f(x)$ is expensive or unavailable.
+1.  **CondG (Conditional Gradient)**: [doi.org/10.1080/02331934.2023.2257709](https://doi.org/10.1080/02331934.2023.2257709)
+2.  **ProxGrad (Proximal Gradient)**: [doi.org/10.1007/s10589-018-0043-x](https://doi.org/10.1007/s10589-018-0043-x)
+3.  **PDFPM (Partially Derivative-Free Proximal Method)**: [arXiv:2508.20071](https://doi.org/10.48550/arXiv.2508.20071).
