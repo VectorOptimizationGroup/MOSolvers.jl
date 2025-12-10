@@ -30,6 +30,11 @@ The user must provide:
 - **$m$ matrices** $A_j \in \mathbb{R}^{n \times n}$ (one for each objective).
 - **A scalar** $\delta \in [0, 1]$.
 
+> [!NOTE]
+> **Special Case: $\delta = 0$**
+> When $\delta = 0$, the non-smooth term $h(x)$ becomes zero (since $Z_j = \{0\}$), and the solver adapts to minimize the smooth function $F(x) = f(x)$.
+> Even in this case, the user **must still provide** the $m$ matrices $A_j$ (e.g., identity matrices). The solver logic requires these inputs to define the problem structure, even if the resulting set $Z_j$ is a singleton.
+
 ### Implementation Details
 
 The evaluation of this structure is handled in `src/utils/evalh.jl`.
