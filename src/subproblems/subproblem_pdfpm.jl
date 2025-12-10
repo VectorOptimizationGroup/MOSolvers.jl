@@ -1,28 +1,45 @@
 """
-    subproblem_pdfpm(x, Jf, h, SubProbParams; sigma=1.0, B=nothing,
-                       tol=sqrt(eps(T)), max_iter=3000, max_time=5.0,
-                       verbose=0, warm_start=nothing, solver_cache=nothing) -> (θ, u, success, msg)
+    subproblem_pdfpm(x, Jf, h, SubProbParams; kw...)
 
-Solves the quadratic subproblem (PDFPM) at point `x`:
+Solve the PDFPM quadratic subproblem at point `x`.
 
-    min τ + (σ/2)‖u - x‖²
-    s.t.  ⟨∇f_j(x), u - x⟩  + (1/2)(u - x)' B_j (u - x)  + ( ⟨b_j, w_j⟩ - h_j ) ≤ τ,  if h_j ≉ 0
-          ⟨∇f_j(x), u - x⟩  + (1/2)(u - x)' B_j (u - x)                      ≤ τ,  if h_j ≈ 0
-          A_j' w_j = u   (∀ j)
-          lb ≤ u ≤ ub,   w_j ≥ 0
+This function handles two cases:
 
-Parameters:
-- `sigma` (σ) controls the quadratic regularization in the objective.
-- `B`: vector of optional {B_j} matrices (one per objective). If `nothing`, uses identity.
-- `tol`, `max_iter`, `max_time` and `verbose`: Ipopt attributes.
-- `warm_start`: initial guess for `u` (respected if ∈ [lb,ub]).
-- `solver_cache`: reuse of `Model` for repeated calls.
+**Special Case (all h ≈ 0):**
+    min τ + (σ/2)||u - x||^2
+    s.t.
+    <∇f_j(x), u - x> + (1/2)(u - x)' B_j (u - x) ≤ τ,   (∀ j)
+    lb ≤ u ≤ ub
 
-Returns:
-- `θ = τ* + (σ/2)‖u* - x‖²` (modeled objective value),
-- `u` (solution),
-- `success::Bool`,
-- `msg::String` (solver status).
+**General Case (some h_j ≉ 0):**
+    min τ + (σ/2)||u - x||^2
+    s.t.
+    <∇f_j(x), u - x> + (1/2)(u - x)' B_j (u - x) + (<b_j, w_j> - h_j) ≤ τ,  if h_j ≉ 0
+    <∇f_j(x), u - x> + (1/2)(u - x)' B_j (u - x)                      ≤ τ,  if h_j ≈ 0
+    A_j' w_j = u (∀ j)
+    lb ≤ u ≤ ub, w_j ≥ 0
+
+# Arguments
+- `x::AbstractVector`: Current point.
+- `Jf::AbstractMatrix`: Jacobian of `f` at `x`.
+- `h::AbstractVector`: Value of `h` at `x`.
+- `SubProbParams::SubProblemParams`: Problem parameters.
+
+# Keywords
+- `sigma::Real`: Regularization parameter σ.
+- `B::Union{Nothing, Vector}`: Optional B matrices (one per objective).
+- `tol::Real`: Tolerance.
+- `max_iter::Integer`: Maximum number of iterations.
+- `max_time::Real`: Maximum execution time.
+- `verbose::Integer`: Verbosity level.
+- `warm_start::Union{Nothing, AbstractVector}`: Initial guess for `u`.
+- `solver_cache::Union{Nothing, Model}`: Reusable JuMP model.
+
+# Returns
+- `theta::T`: Modeled objective value: `τ* + (σ/2)||u* - x||^2`.
+- `u::Vector{T}`: Solution vector.
+- `success::Bool`: Whether the solver converged.
+- `message::String`: Status message.
 """
 function subproblem_pdfpm(x::AbstractVector{T}, Jf::AbstractMatrix{T}, h::AbstractVector{T},
                             SubProbParams::SubProblemParams;

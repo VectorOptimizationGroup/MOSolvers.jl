@@ -3,34 +3,46 @@
                         sigma=1.0, tol=sqrt(eps(T)),
                         max_iter=3000, max_time=5.0,
                         verbose=0, warm_start=nothing,
-                        solver_cache=nothing)
-  -> (θ, u, success, msg)
+    subproblem_proxgrad(x, Jf, h, SubProbParams; kw...)
 
-Solves the proximal subproblem at point `x`:
+Solve the proximal subproblem at point `x`.
 
-Special case (all h ≈ 0):
-    min τ + (σ/2)‖u - x‖²
-    s.t. ⟨∇f_j(x), u - x⟩ ≤ τ   (∀ j)
-         lb ≤ u ≤ ub
+This function handles two cases:
 
-General case (some h_j ≉ 0):
-    min τ + (σ/2)‖u - x‖²
-    s.t. ⟨∇f_j(x), u - x⟩ + (⟨b_j, w_j⟩ - h_j) ≤ τ,   if h_j ≉ 0
-         ⟨∇f_j(x), u - x⟩                       ≤ τ,   if h_j ≈ 0
-         A_j' w_j = u                            (∀ j)
-         lb ≤ u ≤ ub,  w_j ≥ 0
+**Special Case (all h ≈ 0):**
+    min τ + (σ/2)||u - x||^2
+    s.t.
+    <∇f_j(x), u - x> ≤ τ,   (∀ j)
+    lb ≤ u ≤ ub
 
-Parameters:
-- `sigma` (σ): proximal parameter (controls quadratic regularization).
-- `tol`, `max_iter`, `max_time` and `verbose`: Ipopt attributes.
-- `warm_start`: initial guess for `u` (respected if ∈ [lb,ub]).
-- `solver_cache`: reuse of `Model` for repeated calls.
+**General Case (some h_j ≉ 0):**
+    min τ + (σ/2)||u - x||^2
+    s.t.
+    <∇f_j(x), u - x> + (<b_j, w_j> - h_j) ≤ τ,   if h_j ≉ 0
+    <∇f_j(x), u - x>                      ≤ τ,   if h_j ≈ 0
+    A_j' w_j = u
+    lb ≤ u ≤ ub,  w_j ≥ 0
 
-Returns:
-- `θ = τ* + (σ/2)‖u* - x‖²` (modeled objective value),
-- `u` (solution),
-- `success::Bool`,
-- `msg::String` (solver status).
+# Arguments
+- `x::AbstractVector`: Current point.
+- `Jf::AbstractMatrix`: Jacobian of `f` at `x`.
+- `h::AbstractVector`: Value of `h` at `x`.
+- `SubProbParams::SubProblemParams`: Problem parameters.
+
+# Keywords
+- `sigma::Real`: Proximal parameter σ.
+- `tol::Real`: Tolerance.
+- `max_iter::Integer`: Maximum number of iterations.
+- `max_time::Real`: Maximum execution time.
+- `verbose::Integer`: Verbosity level.
+- `warm_start::Union{Nothing, AbstractVector}`: Initial guess for `u`.
+- `solver_cache::Union{Nothing, Model}`: Reusable JuMP model.
+
+# Returns
+- `theta::T`: Modeled objective value: `τ* + (σ/2)||u* - x||^2`.
+- `u::Vector{T}`: Solution vector.
+- `success::Bool`: Whether the solver converged.
+- `message::String`: Status message.
 """
 function subproblem_proxgrad(x::AbstractVector{T}, Jf::AbstractMatrix{T}, h::AbstractVector{T},
                              SubProbParams::SubProblemParams;

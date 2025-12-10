@@ -1,36 +1,43 @@
 """
-    subproblem_condg(x, Jf, h, SubProbParams;
-                     tol=sqrt(eps(T)), max_iter=10_000,
-                     max_time=5.0, verbose=0,
-                     solver_cache=nothing, presolve="on")
-  -> (tau::T, u::Vector{T}, success::Bool, message::String)
+    subproblem_condg(x, Jf, h, SubProbParams; kw...)
 
-Solves the CondG linear subproblem at point `x`:
+Solve the CondG linear subproblem at point `x`.
 
-Special case (all h ≈ 0):
+This function handles two cases:
+
+**Special Case (all h ≈ 0):**
     min τ
-    s.t. ⟨∇f_j(x), u - x⟩ ≤ τ,   (∀ j)
-         lb ≤ u ≤ ub
+    s.t.
+    <∇f_j(x), u - x> ≤ τ,   (∀ j)
+    lb ≤ u ≤ ub
 
-General case (some h_j ≉ 0):
+**General Case (some h_j ≉ 0):**
     min τ
-    s.t. ⟨∇f_j(x), u - x⟩ + (⟨b_j, w_j⟩ - h_j) ≤ τ,  if h_j ≉ 0
-         ⟨∇f_j(x), u - x⟩                      ≤ τ,  if h_j ≈ 0
-         A_j' w_j = u
-         lb ≤ u ≤ ub,  w_j ≥ 0
+    s.t.
+    <∇f_j(x), u - x> + (<b_j, w_j> - h_j) ≤ τ,  if h_j ≉ 0
+    <∇f_j(x), u - x>                      ≤ τ,  if h_j ≈ 0
+    A_j' w_j = u
+    lb ≤ u ≤ ub,  w_j ≥ 0
 
-Parameters:
-- `tol`: tolerance used both for numerical comparisons (h_j ≈ 0) and HiGHS tolerances.
-- `max_iter`, `max_time`: resource caps to prevent stalling.
-- `verbose`: >0 prints HiGHS logs; 0 is silent.
-- `solver_cache`: reuse a JuMP `Model` across calls (it is cleared on entry).
-- `presolve`: HiGHS presolve mode (`"on"`, `"off"`, `"auto"`).
+# Arguments
+- `x::AbstractVector`: Current point.
+- `Jf::AbstractMatrix`: Jacobian of `f` at `x`.
+- `h::AbstractVector`: Value of `h` at `x`.
+- `SubProbParams::SubProblemParams`: Problem parameters (A, b, lb, ub).
 
-Returns:
-- `tau` (objective value),
-- `u` (solution),
-- `success::Bool`,
-- `message::String` (solver status).
+# Keywords
+- `tol::Real`: Tolerance for numerical comparisons and solver.
+- `max_iter::Integer`: Maximum number of iterations.
+- `max_time::Real`: Maximum execution time.
+- `verbose::Integer`: Verbosity level.
+- `solver_cache::Union{Nothing, Model}`: Reusable JuMP model.
+- `presolve::String`: HiGHS presolve option ("on", "off", "auto").
+
+# Returns
+- `tau::T`: Optimal objective value.
+- `u::Vector{T}`: Solution vector.
+- `success::Bool`: Whether the solver converged.
+- `message::String`: Status message.
 """
 function subproblem_condg(x::AbstractVector{T}, Jf::AbstractMatrix{T}, h::AbstractVector{T},
                           SubProbParams::SubProblemParams;
