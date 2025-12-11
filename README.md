@@ -66,7 +66,8 @@ options = PDFPM_options(
     max_iter=100,
     opt_tol=1e-6,
     sigma=1.0,
-    alpha=0.1
+    alpha=0.1,
+    print_interval=1
 )
 
 # 3. Solve the Problem
