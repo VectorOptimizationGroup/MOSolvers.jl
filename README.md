@@ -22,6 +22,26 @@ import Pkg
 Pkg.add(url="https://github.com/VectorOptimizationGroup/MOSolvers.jl")
 ```
 
+If installation via URL fails, you can install the package from a local clone of the repository.
+
+First, clone the repository to a directory of your choice:
+
+```bash
+git clone https://github.com/VectorOptimizationGroup/MOSolvers.jl
+```
+
+This command will create a local directory named `MOSolvers.jl`.
+
+Next, decide whether you want to install the package in a specific Julia project (recommended) or in the global environment. In both cases, install it by explicitly pointing to the local path of the cloned repository.
+
+```julia
+import Pkg
+Pkg.add(path="/path/to/MOSolvers.jl")
+```
+
+**Important**
+- Replace `/path/to/MOSolvers.jl` with the actual location where the repository was cloned on your system.
+
 ## Problem Classes
 
 These solvers are specialized for composite problems of the form $F(x) = f(x) + h(x)$, where $h(x)$ has a specific max-linear structure.
