@@ -373,7 +373,7 @@ function _ProxGrad_optimize!(result::OptimResult, f!::Function, Jf!::Function, h
         if !line_search_result.success
             result.message = line_search_result.message
             result.success = false
-            break
+            return result
         end
 
         # Update x (in-place)
@@ -393,7 +393,7 @@ function _ProxGrad_optimize!(result::OptimResult, f!::Function, Jf!::Function, h
         theta, p = subproblem(x, JF, h, :proxgrad)
         result.subproblem_time += time() - start_subproblem_time
         if !result.success
-            break
+            return result
         end
 
         # Update
@@ -410,11 +410,11 @@ function _ProxGrad_optimize!(result::OptimResult, f!::Function, Jf!::Function, h
         if options.stop_criteria == :NormProgress
             if norm_progress <= options.ftol && result.abs_theta <= options.opt_tol 
                 result.message = "The solution was found using |θ_ProxGrad| <= $(options.opt_tol) and norm_progress <= $(options.ftol)"
-                break
+                return result
             end
         elseif result.abs_theta <= options.opt_tol
             result.message = "The solution was found using |θ_ProxGrad| <= $(options.opt_tol)"
-            break
+            return result
         end
 
         abort = callback(iter, result)
@@ -427,10 +427,11 @@ function _ProxGrad_optimize!(result::OptimResult, f!::Function, Jf!::Function, h
         end
     end
     
-    if options.verbose > 0 && result.iter >= options.max_iter
-        result.message = "Maximum number of iterations reached $(options.max_iter)"
+    # Only exhaustion reaches this epilogue; other termination causes return above.
+    result.message = "Maximum number of iterations reached $(options.max_iter)"
+    result.success = false
+    if options.verbose > 0
         @info result.message
-        result.success = false
     end
     
     return result

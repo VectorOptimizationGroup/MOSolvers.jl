@@ -556,10 +556,11 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_i
         end
     end
     
-    if options.verbose > 0 && result.iter >= options.max_iter
-        result.message = "Maximum number of iterations reached $(options.max_iter)"
+    # Only exhaustion reaches this epilogue; other termination causes return above.
+    result.message = "Maximum number of iterations reached $(options.max_iter)"
+    result.success = false
+    if options.verbose > 0
         @info result.message
-        result.success = false
     end
     
     return result
