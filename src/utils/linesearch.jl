@@ -118,6 +118,8 @@ Perform a Multiobjective Armijo backtracking line search.
 
 Finds a step size `α` such that:
 `F_i(x + α d) ≤ F_i(x) + ρ * α * factor` for all `i`.
+Nonfinite trial objectives trigger step halving. Explicit evaluation errors,
+exhausted reduction limits, and steps that round back to `x` terminate with failure.
 
 # Arguments
 - `F::Function`: Objective function `F(x)`. Must return `(value, error_msg)`.
@@ -152,11 +154,16 @@ function armijo(F::Function, x::AbstractVector{T}, d::AbstractVector{T}, Fx::Abs
     y = similar(x)
 
     function φ(αk::T)
-        result.nfev += 1
         @inbounds begin
             @. y = x + αk * d
         end
+        if y == x
+            result.success = false
+            result.message = "The Armijo trial point is indistinguishable from x"
+            return fill(T(Inf), m)
+        end
         # Call F with the new return format (value, error)
+        result.nfev += 1
         F_val, error_msg = F(y)
         
         # Check if there was an error in evaluation
@@ -285,7 +292,7 @@ function BacktrackMO!(result::LineSearchResult{T}, φ::Function, φ_grad_0::Vect
         return result
     end
     
-    failed_indices = findall(@. φ_val > (φ_0 + ρ * α * factor))
+    failed_indices = findall(@. !isfinite(φ_val) | !(φ_val <= (φ_0 + ρ * α * factor)))
     
     if isempty(failed_indices)
         result.stp = α
@@ -297,9 +304,12 @@ function BacktrackMO!(result::LineSearchResult{T}, φ::Function, φ_grad_0::Vect
 
     for i in 1:options.max_iter
 
-        for j in failed_indices
+        if any(!isfinite, φ_val)
+            # Interpolation is undefined for nonfinite objective values.
+            α *= T(0.5)
+        else
+            j = first(failed_indices)
             α = safeguarded_backtrack(α, φ_val[j], φ_grad_0[j], φ_0[j])
-            break
         end
         
         if α <= α_min
@@ -316,7 +326,7 @@ function BacktrackMO!(result::LineSearchResult{T}, φ::Function, φ_grad_0::Vect
             return result
         end
         
-        failed_indices = findall(@. φ_val > (φ_0 + ρ * α * factor))
+        failed_indices = findall(@. !isfinite(φ_val) | !(φ_val <= (φ_0 + ρ * α * factor)))
         if isempty(failed_indices)
             result.stp = α
             result.F_final = copy(φ_val)
