@@ -107,7 +107,7 @@ mutable struct LineSearchResult{T<:AbstractFloat}
     message::String # Message
 end
 
-function LineSearchResult(; stp::T=0.0, F_final::AbstractVector{T}, nfev::Int=0, success::Bool=true, message::String="The Armijo line search has not started") where {T<:AbstractFloat}
+function LineSearchResult(; F_final::AbstractVector{T}, stp::T=zero(eltype(F_final)), nfev::Int=0, success::Bool=true, message::String="The Armijo line search has not started") where {T<:AbstractFloat}
     return LineSearchResult(stp, copy(F_final), nfev, success, message)
 end
 
@@ -206,7 +206,7 @@ Calculate a new step size via quadratic interpolation with safeguards.
 Models `φ(α)` as a quadratic `q(α)` matched at `α=0` and `α=current`.
 Result is clamped to `[τ₁ * α, τ₂ * α]` to ensure robust decrease.
 """
-function safeguarded_backtrack(α::T, φ::T, φ_grad_0::T, φ_0::T; τ₁::T=0.05, τ₂::T=0.95) where {T<:AbstractFloat}
+function safeguarded_backtrack(α::T, φ::T, φ_grad_0::T, φ_0::T; τ₁::T=T(0.05), τ₂::T=T(0.95)) where {T<:AbstractFloat}
 
     """
     Calculates a new step `stpt` via quadratic interpolation,
