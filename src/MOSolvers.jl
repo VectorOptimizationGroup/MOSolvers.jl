@@ -38,6 +38,11 @@ module MOSolvers
     include("solvers/proxgrad.jl")
     include("solvers/pdfpm.jl")
 
+    include("internals/display.jl")
+
     # Export solvers
     export CondG, CondG_options, ProxGrad, ProxGrad_options, PDFPM, PDFPM_options
+
+    # Export support-function utilities
+    export SubProblemParams, evalh!, clear_evalh_cache!, set_evalh_highs_limits!
 end

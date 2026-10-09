@@ -310,10 +310,7 @@ function _ProxGrad_optimize!(result::OptimResult, f!::Function, Jf!::Function, h
     end
     
     if options.verbose > 0
-        @info "----------------------------------------------------------------------"
-        @info "Proximal Gradient Method for Composite Multiojective Optimization"
-        @info "----------------------------------------------------------------------"
-        @info "N of variables=$(n), N of objectives=$(m), Opt tol=$(options.opt_tol), Max iter=$(options.max_iter), mu=$(options.mu)"
+        print_optimizer_header("ProxGrad", options, n, m)
     end
 
     # Initial evaluation

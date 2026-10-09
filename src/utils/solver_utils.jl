@@ -172,36 +172,6 @@ function process_bounds(bound, n::Int, default_value)
     end
 end
 
-"""
-    print_table(result)
-
-Print a formatted status row for the current iteration logic.
-Handles the header for the first iteration (`iter == 0`).
-"""
-function print_table(result::OptimResult)
-    if result.iter == 0
-        separator = "-"^70
-        @info separator
-        headers = ["Iter", "|θ(x^k)|", "    ||x^k - x^{k-1}||/max{1, ||x^{k-1}||}"]
-        n_fields = length(headers)
-        format_str = "%7s  %14s  %25s"
-        fmt = Printf.Format(format_str)
-        header_str = Printf.format(fmt, headers...)
-        
-        @info header_str
-        @info separator
-        
-        # Print progress row
-        progress_str = @sprintf("%5d  %18.6e  %25s", 
-                        result.iter, result.abs_theta, "--")
-        @info progress_str
-    else
-        # Print progress row
-        progress_str = @sprintf("%5d  %18.6e  %25.6e", 
-                result.iter, result.abs_theta, result.norm_progress)
-        @info progress_str
-    end
-end
 
 """
     bfgsupdate!(B, x, xprev, JF, JFprev, theta)

@@ -311,10 +311,7 @@ function _CondG_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::
     end
     
     if options.verbose > 0
-        @info "----------------------------------------------------------------------"
-        @info "Conditional Gradient Method for Composite Multiojective Optimization"
-        @info "----------------------------------------------------------------------"
-        @info "N of variables=$(n), N of objectives=$(m), Opt tol=$(options.opt_tol), Max iter=$(options.max_iter)"
+        print_optimizer_header("CondG", options, n, m)
     end
 
     # Compute F and JF

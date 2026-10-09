@@ -366,11 +366,7 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_i
     start_time = time()
     
     if options.verbose > 0
-        @info "----------------------------------------------------------------------"
-        @info "A Partially Derivative-Free Proximal Method for Composite Multiojective \n Optimization in the Hölder Setting"
-        @info "----------------------------------------------------------------------"
-        @info "N of variables=$(n), N of objectives=$(m), Opt tol=$(options.opt_tol), Max iter=$(options.max_iter)"
-        @info "Epsilon=$(options.epsilon), Sigma=$(sigma), Alpha=$(options.alpha)"
+        print_optimizer_header("PDFPM", options, n, m)
     end
 
     # Compute F and JF
