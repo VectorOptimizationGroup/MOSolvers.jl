@@ -1,37 +1,100 @@
 """
-    mutable struct PDFPMParams{T<:AbstractFloat}
+    PDFPMOptions
+
+Public configuration object for the Partially Derivative-Free Proximal Method
+(PDFPM) solver.
+
+`PDFPMOptions` does not choose the solver's floating-point type. Numeric solver
+options are converted once at the solver boundary to match the element type of
+`x0`. The execution-time limit is measured in seconds and converted separately
+to `Float64`.
+"""
+Base.@kwdef struct PDFPMOptions
+    verbose::Int = 1
+    max_iter::Int = 1000
+    opt_tol::Real = 1e-4
+    ftol::Real = 1e-4
+    max_time::Real = 3600.0
+    print_interval::Int = 1
+    stop_criteria::Symbol = :pdfpm
+    store_trace::Bool = false
+    epsilon::Real = 1e-10
+    sigma::Real = 1.0
+    alpha::Real = 0.1
+    max_subproblem_iter::Int = 200
+    lambda_factor::Union{Function,Real} = 0.1
+    lambda_min::Real = 1e-12
+
+    function PDFPMOptions(
+        verbose,
+        max_iter,
+        opt_tol,
+        ftol,
+        max_time,
+        print_interval,
+        stop_criteria,
+        store_trace,
+        epsilon,
+        sigma,
+        alpha,
+        max_subproblem_iter,
+        lambda_factor,
+        lambda_min,
+    )
+        options = new(
+            Int(verbose),
+            Int(max_iter),
+            opt_tol,
+            ftol,
+            max_time,
+            Int(print_interval),
+            stop_criteria,
+            Bool(store_trace),
+            epsilon,
+            sigma,
+            alpha,
+            Int(max_subproblem_iter),
+            lambda_factor,
+            lambda_min,
+        )
+        return _validate_pdfpm_options(options)
+    end
+end
+
+"""
+    struct PDFPMParams{T<:AbstractFloat}
 
 Parameters for the Partially Derivative-Free Proximal Method (PDFPM) solver.
 
 # Fields
-- `verbose::Integer`: Verbose level (0: none, 1: normal, 2: detailed).
-- `max_iter::Integer`: Maximum number of iterations.
+- `verbose::Int`: Verbose level (0: none, 1: normal, 2: detailed).
+- `max_iter::Int`: Maximum number of iterations.
 - `opt_tol::T`: Optimality tolerance (convergence criterion).
 - `ftol::T`: Function tolerance (convergence criterion).
-- `max_time::T`: Maximum execution time in seconds.
-- `print_interval::Integer`: Interval for printing progress (in iterations).
+- `max_time::Float64`: Maximum execution time in seconds.
+- `print_interval::Int`: Interval for printing progress (in iterations).
 - `stop_criteria::Symbol`: Additional stopping criteria (`:pdfpm` or `:NormProgress`).
 - `store_trace::Bool`: Whether to store the trace of iterates `x` during optimization.
 - `epsilon::T`: Tolerance parameter ε for the subproblem.
 - `sigma::T`: Regularization parameter σ.
 - `alpha::T`: Parameter α for sufficient decrease condition.
-- `max_subproblem_iter::Integer`: Maximum number of iterations for the subproblem.
+- `max_subproblem_iter::Int`: Maximum number of iterations for the subproblem.
 - `lambda_factor::Union{Function, T}`: Factor to determine the finite difference parameters.
 - `lambda_min::T`: Minimum value for the finite difference parameter λ.
 """
-mutable struct PDFPMParams{T<:AbstractFloat}
-    verbose::Integer # Verbose level
-    max_iter::Integer # Maximum number of iterations
+struct PDFPMParams{T<:AbstractFloat}
+    verbose::Int # Verbose level
+    max_iter::Int # Maximum number of iterations
     opt_tol::T # Optimality tolerance
     ftol::T # Function tolerance
-    max_time::T # Maximum time in seconds
-    print_interval::Integer # Print interval
+    max_time::Float64 # Maximum time in seconds
+    print_interval::Int # Print interval
     stop_criteria::Symbol # Additional stop criteria
     store_trace::Bool # Store trace
     epsilon::T # Epsilon parameter for finite differences
     sigma::T # Sigma parameter for regularization
     alpha::T # Alpha parameter for sufficient decrease
-    max_subproblem_iter::Integer # Maximum subproblem iterations
+    max_subproblem_iter::Int # Maximum subproblem iterations
     lambda_factor::Union{Function, T} # Percentage in [0,1] of the interval [0, ϵ/(σ√n)] used as λ via λ = max(lambda_factor * ϵ/(σ√n), λ_min). If a Function, it is evaluated at runtime; recommended signature: lambda_factor(; iter, sigma, n) -> Real in [0,1]
     lambda_min::T # Minimum lambda for finite differences
 end
@@ -40,48 +103,80 @@ end
 """
     PDFPM_options(; kw...)
 
-Create a `PDFPMParams` structure with default or specified values.
+Create a public `PDFPMOptions` configuration object.
+
+Numeric solver options are converted to the element type of `x0` at the
+`PDFPM` solver boundary. `max_time` is measured in seconds and stored
+internally as a `Float64`.
 
 # Keywords
 - `verbose::Integer = 1`: Verbose level (0: none, 1: normal, 2: detailed).
 - `max_iter::Integer = 1000`: Maximum number of iterations.
-- `opt_tol::T = 1e-4`: Optimality tolerance.
-- `ftol::T = 1e-4`: Function tolerance.
-- `max_time::T = 3600.0`: Maximum time in seconds.
-- `print_interval::Integer = 10`: Print interval.
+- `opt_tol::Real = 1e-4`: Optimality tolerance.
+- `ftol::Real = 1e-4`: Function tolerance.
+- `max_time::Real = 3600.0`: Maximum time in seconds.
+- `print_interval::Integer = 1`: Print interval.
 - `stop_criteria::Symbol = :pdfpm`: Additional stopping criteria (`:pdfpm` or `:NormProgress`).
 - `store_trace::Bool = false`: Whether to store the trace of `x` during optimization.
-- `epsilon::T = 1e-10`: Tolerance parameter ε.
-- `sigma::T = 1.0`: Regularization parameter σ.
-- `alpha::T = 0.1`: Parameter α for sufficient decrease.
+- `epsilon::Real = 1e-10`: Tolerance parameter ε.
+- `sigma::Real = 1.0`: Regularization parameter σ.
+- `alpha::Real = 0.1`: Parameter α for sufficient decrease.
 - `max_subproblem_iter::Integer = 200`: Maximum subproblem iterations.
-- `lambda_factor::Union{T,Function} = 0.1`: Factor to determine finite difference step.
-- `lambda_min::T = 1e-12`: Minimum finite difference step λ.
+- `lambda_factor::Union{Real,Function} = 0.1`: Factor to determine finite difference step.
+- `lambda_min::Real = 1e-12`: Minimum finite difference step λ.
 
 # Returns
-- `PDFPMParams`: A parameter structure for the PDFPM solver.
+- `PDFPMOptions`: A public configuration object for the PDFPM solver.
 """
-function PDFPM_options(; verbose=1, max_iter=1000, opt_tol=1e-4, ftol=1e-4, max_time=3600.0, print_interval=10, stop_criteria=:pdfpm, store_trace=false, epsilon=1e-10, sigma=1.0, alpha=0.1, max_subproblem_iter=200, lambda_factor=0.1, lambda_min=1e-12)
-    if stop_criteria ∉ [:pdfpm, :NormProgress]
-        error("The stop criteria is not supported: $stop_criteria")
-    end
+function PDFPM_options(; verbose=1, max_iter=1000, opt_tol=1e-4, ftol=1e-4, max_time=3600.0, print_interval=1, stop_criteria=:pdfpm, store_trace=false, epsilon=1e-10, sigma=1.0, alpha=0.1, max_subproblem_iter=200, lambda_factor=0.1, lambda_min=1e-12)
+    return PDFPMOptions(verbose, max_iter, opt_tol, ftol, max_time, print_interval, stop_criteria, store_trace, epsilon, sigma, alpha, max_subproblem_iter, lambda_factor, lambda_min)
+end
 
-    # Do not evaluate lambda_factor if it's a function; evaluation happens during optimize
+function _validate_pdfpm_options(options::PDFPMOptions)
+    options.max_iter >= 0 || throw(ArgumentError("`max_iter` must be nonnegative."))
+    !isnan(options.max_time) && options.max_time >= 0.0 || throw(ArgumentError("`max_time` must be nonnegative or Inf."))
+    options.print_interval > 0 || throw(ArgumentError("`print_interval` must be positive."))
+    options.max_subproblem_iter > 0 || throw(ArgumentError("`max_subproblem_iter` must be positive."))
+    options.stop_criteria in (:pdfpm, :NormProgress) ||
+        throw(ArgumentError("The stop criteria is not supported: $(options.stop_criteria)"))
+    return options
+end
+
+function _convert_pdfpm_options(::Type{T}, options::PDFPMOptions) where {T<:AbstractFloat}
+    opt_tol = T(options.opt_tol)
+    ftol = T(options.ftol)
+    epsilon = T(options.epsilon)
+    sigma = T(options.sigma)
+    alpha = T(options.alpha)
+    lambda_min = T(options.lambda_min)
+    lambda_factor = options.lambda_factor isa Function ? options.lambda_factor : clamp(T(options.lambda_factor), zero(T), one(T))
+
+    isfinite(opt_tol) && opt_tol >= zero(T) || throw(ArgumentError("`opt_tol` must be finite and nonnegative."))
+    isfinite(ftol) && ftol >= zero(T) || throw(ArgumentError("`ftol` must be finite and nonnegative."))
+    isfinite(epsilon) && epsilon > zero(T) || throw(ArgumentError("`epsilon` must be finite and positive."))
+    isfinite(sigma) && sigma > zero(T) || throw(ArgumentError("`sigma` must be finite and positive."))
+    isfinite(alpha) && alpha > zero(T) || throw(ArgumentError("`alpha` must be finite and positive."))
+    isfinite(lambda_min) && lambda_min > zero(T) || throw(ArgumentError("`lambda_min` must be finite and positive."))
     if !(lambda_factor isa Function)
-        # Clamp numeric lambda_factor into [0, 1]
-        if !(lambda_factor isa Real)
-            @warn "lambda_factor must be a number in [0,1] or a function; using 0.1"
-            lambda_factor = 0.1
-        else
-            if !isfinite(lambda_factor)
-                @warn "lambda_factor is not finite; using 0.1"
-                lambda_factor = 0.1
-            end
-            lambda_factor = clamp(lambda_factor, 0.0, 1.0)
-        end
+        isfinite(lambda_factor) || throw(ArgumentError("`lambda_factor` must be finite or a function."))
     end
 
-    return PDFPMParams(verbose, max_iter, opt_tol, ftol, max_time, print_interval, stop_criteria, store_trace, epsilon, sigma, alpha, max_subproblem_iter, lambda_factor, lambda_min)
+    return PDFPMParams{T}(
+        options.verbose,
+        options.max_iter,
+        opt_tol,
+        ftol,
+        Float64(options.max_time),
+        options.print_interval,
+        options.stop_criteria,
+        options.store_trace,
+        epsilon,
+        sigma,
+        alpha,
+        options.max_subproblem_iter,
+        lambda_factor,
+        lambda_min,
+    )
 end
 
 """
@@ -102,7 +197,7 @@ This method can use finite differences if the Jacobian `evalJf` is not provided.
 - `A::Vector{<:AbstractMatrix}`: A vector of matrices defining the sets Z_j.
 - `delta::Real`: The scaling parameter δ for the sets Z_j.
 - `x0::AbstractVector`: Initial guess.
-- `options::PDFPMParams`: Options for the solver (see [`PDFPM_options`]).
+- `options::PDFPMOptions`: Options for the solver (see [`PDFPM_options`]).
 
 # Keywords
 - `evalJf::Union{Nothing, Function}`: Evaluate the Jacobian Jf(x). If `nothing`, finite differences are used.
@@ -114,14 +209,15 @@ This method can use finite differences if the Jacobian `evalJf` is not provided.
 - `result::OptimResult`: Optimization result containing solution `x`, objective values `Fval`, and other statistics.
 """
 
-function PDFPM(evalf::Function, A::Vector{<:AbstractMatrix{T}}, delta::T, 
-    x0::AbstractVector{T}, options::PDFPMParams=PDFPM_options(); 
+function PDFPM(evalf::Function, A::Vector{<:AbstractMatrix{T}}, delta::T,
+    x0::AbstractVector{T}, options::PDFPMOptions=PDFPM_options();
     evalJf::Union{Nothing,Function}=nothing,
     lb::Union{Nothing,AbstractVector{T},Number}=nothing, 
     ub::Union{Nothing,AbstractVector{T},Number}=nothing,
     callback=noop_callback) where {T<:AbstractFloat}
 
     start_time = time()
+    params = _convert_pdfpm_options(T, options)
 
     n = length(x0)
     m = length(A)
@@ -195,21 +291,21 @@ function PDFPM(evalf::Function, A::Vector{<:AbstractMatrix{T}}, delta::T,
 
     function subproblem(x, JF, h, method::Symbol; sigma::T=1.0, B::Union{Nothing, Vector{<:AbstractMatrix{T}}}=nothing)
         if method == :condg
-            theta, p, success, message = subproblem_condg(x, JF, h, SubProbParams; verbose=options.verbose)
+            theta, p, success, message = subproblem_condg(x, JF, h, SubProbParams; verbose=params.verbose)
             if !success
                 result.success = false
                 result.message = "The subproblem of CondG failed: " * message
             end
             return theta, p
         elseif method == :proxgrad
-            theta, p, success, message = subproblem_proxgrad(x, JF, h, SubProbParams; sigma=sigma, verbose=options.verbose)
+            theta, p, success, message = subproblem_proxgrad(x, JF, h, SubProbParams; sigma=sigma, verbose=params.verbose)
             if !success
                 result.success = false
                 result.message = "The subproblem of ProxGrad failed: " * message
             end
             return theta, p
         elseif method == :pdfpm
-            theta, p, success, message = subproblem_pdfpm(x, JF, h, SubProbParams; sigma=sigma, B=B, verbose=options.verbose)
+            theta, p, success, message = subproblem_pdfpm(x, JF, h, SubProbParams; sigma=sigma, B=B, verbose=params.verbose)
             if !success
                 result.success = false
                 result.message = "The subproblem of PDFPM failed: " * message
@@ -220,23 +316,22 @@ function PDFPM(evalf::Function, A::Vector{<:AbstractMatrix{T}}, delta::T,
         end
     end
 
-    _PDFPM_optimize!(result, f!, Jf!, Jf_is_analytic, h!, m, subproblem, options, callback)
+    _PDFPM_optimize!(result, f!, Jf!, Jf_is_analytic, h!, m, subproblem, params, callback)
     result.total_time = time() - start_time
     return result
 end
 
 """
-    _PDFPM_optimize!(f!, Jf!, h!, x0, options, callback, result)
+    _PDFPM_optimize!(result, f!, Jf!, Jf_is_analytic, h!, m, subproblem, options, callback)
 
 Internal function that implements the PDFPM algorithm.
 """
-function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_is_analytic::Bool, h!::Function, m::Int, subproblem::Function, options::PDFPMParams, callback::Function)
+function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_is_analytic::Bool, h!::Function, m::Int, subproblem::Function, options::PDFPMParams{T}, callback::Function) where {T<:AbstractFloat}
     
     # Initialize optimization
     x = copy(result.x)
     n = length(x)
 
-    T = eltype(x)
     Fx = zeros(T, m)
     JF = zeros(T, m, n)
     JF_prev = similar(JF)

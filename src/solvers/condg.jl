@@ -1,25 +1,69 @@
 """
-    mutable struct CondGParams{T<:AbstractFloat}
+    CondGOptions
+
+Public configuration object for the Conditional Gradient (CondG) solver.
+
+`CondGOptions` does not choose the solver's floating-point type. Numeric solver
+options are converted once at the solver boundary to match the element type of
+`x0`. The execution-time limit is measured in seconds and converted separately
+to `Float64`.
+"""
+Base.@kwdef struct CondGOptions
+    verbose::Int = 1
+    max_iter::Int = 1000
+    opt_tol::Real = 1e-4
+    ftol::Real = 1e-4
+    max_time::Real = 3600.0
+    print_interval::Int = 1
+    stop_criteria::Symbol = :condg
+    store_trace::Bool = false
+
+    function CondGOptions(
+        verbose,
+        max_iter,
+        opt_tol,
+        ftol,
+        max_time,
+        print_interval,
+        stop_criteria,
+        store_trace,
+    )
+        options = new(
+            Int(verbose),
+            Int(max_iter),
+            opt_tol,
+            ftol,
+            max_time,
+            Int(print_interval),
+            stop_criteria,
+            Bool(store_trace),
+        )
+        return _validate_condg_options(options)
+    end
+end
+
+"""
+    struct CondGParams{T<:AbstractFloat}
 
 Parameters for the Conditional Gradient (CondG) solver.
 
 # Fields
-- `verbose::Integer`: Verbose level (0: none, 1: normal, 2: detailed).
-- `max_iter::Integer`: Maximum number of iterations.
+- `verbose::Int`: Verbose level (0: none, 1: normal, 2: detailed).
+- `max_iter::Int`: Maximum number of iterations.
 - `opt_tol::T`: Optimality tolerance (convergence criterion).
 - `ftol::T`: Function tolerance (convergence criterion).
-- `max_time::T`: Maximum execution time in seconds.
-- `print_interval::Integer`: Interval for printing progress (in iterations).
+- `max_time::Float64`: Maximum execution time in seconds.
+- `print_interval::Int`: Interval for printing progress (in iterations).
 - `stop_criteria::Symbol`: Additional stopping criteria (`:condg` or `:NormProgress`).
 - `store_trace::Bool`: Whether to store the trace of iterates `x` during optimization.
 """
-mutable struct CondGParams{T<:AbstractFloat}
-    verbose::Integer # Verbose level
-    max_iter::Integer # Maximum number of iterations
+struct CondGParams{T<:AbstractFloat}
+    verbose::Int # Verbose level
+    max_iter::Int # Maximum number of iterations
     opt_tol::T # Optimality tolerance
     ftol::T # Function tolerance
-    max_time::T # Maximum time in seconds
-    print_interval::Integer # Print interval
+    max_time::Float64 # Maximum time in seconds
+    print_interval::Int # Print interval
     stop_criteria::Symbol # Additional stop criteria
     store_trace::Bool # Store trace
 end
@@ -28,26 +72,55 @@ end
 """
     CondG_options(; kw...)
 
-Create a `CondGParams` structure with default or specified values.
+Create a public `CondGOptions` configuration object.
+
+Numeric tolerances are converted to the element type of `x0` at the `CondG`
+solver boundary. `max_time` is measured in seconds and stored internally as a
+`Float64`.
 
 # Keywords
 - `verbose::Integer = 1`: Verbose level (0: none, 1: normal, 2: detailed).
 - `max_iter::Integer = 1000`: Maximum number of iterations.
-- `opt_tol::T = 1e-4`: Optimality tolerance.
-- `ftol::T = 1e-4`: Function tolerance.
-- `max_time::T = 3600.0`: Maximum time in seconds.
-- `print_interval::Integer = 10`: print interval.
+- `opt_tol::Real = 1e-4`: Optimality tolerance.
+- `ftol::Real = 1e-4`: Function tolerance.
+- `max_time::Real = 3600.0`: Maximum time in seconds.
+- `print_interval::Integer = 1`: Print interval.
 - `stop_criteria::Symbol = :condg`: Additional stopping criteria (`:condg` or `:NormProgress`).
 - `store_trace::Bool = false`: Whether to store the trace of `x` during optimization.
 
 # Returns
-- `CondGParams`: A parameter structure for the CondG solver.
+- `CondGOptions`: A public configuration object for the CondG solver.
 """
-function CondG_options(; verbose=1, max_iter=1000, opt_tol=1e-4, ftol=1e-4, max_time=3600.0, print_interval=10, stop_criteria=:condg, store_trace=false)
-    if stop_criteria ∉ [:condg, :NormProgress]
-        error("The stop criteria is not supported: $stop_criteria")
-    end
-    return CondGParams(verbose, max_iter, opt_tol, ftol, max_time, print_interval, stop_criteria, store_trace)
+function CondG_options(; verbose=1, max_iter=1000, opt_tol=1e-4, ftol=1e-4, max_time=3600.0, print_interval=1, stop_criteria=:condg, store_trace=false)
+    return CondGOptions(verbose, max_iter, opt_tol, ftol, max_time, print_interval, stop_criteria, store_trace)
+end
+
+function _validate_condg_options(options::CondGOptions)
+    options.max_iter >= 0 || throw(ArgumentError("`max_iter` must be nonnegative."))
+    !isnan(options.max_time) && options.max_time >= 0.0 || throw(ArgumentError("`max_time` must be nonnegative or Inf."))
+    options.print_interval > 0 || throw(ArgumentError("`print_interval` must be positive."))
+    options.stop_criteria in (:condg, :NormProgress) ||
+        throw(ArgumentError("The stop criteria is not supported: $(options.stop_criteria)"))
+    return options
+end
+
+function _convert_condg_options(::Type{T}, options::CondGOptions) where {T<:AbstractFloat}
+    opt_tol = T(options.opt_tol)
+    ftol = T(options.ftol)
+
+    isfinite(opt_tol) && opt_tol >= zero(T) || throw(ArgumentError("`opt_tol` must be finite and nonnegative."))
+    isfinite(ftol) && ftol >= zero(T) || throw(ArgumentError("`ftol` must be finite and nonnegative."))
+
+    return CondGParams{T}(
+        options.verbose,
+        options.max_iter,
+        opt_tol,
+        ftol,
+        Float64(options.max_time),
+        options.print_interval,
+        options.stop_criteria,
+        options.store_trace,
+    )
 end
 
 """
@@ -67,7 +140,7 @@ where f: R^n -> R^m is a smooth vector-valued function, and h: R^n -> R^m is a c
 - `A::Vector{<:AbstractMatrix}`: A vector of matrices defining the sets Z_j.
 - `delta::Real`: The scaling parameter δ for the sets Z_j.
 - `x0::AbstractVector`: Initial guess.
-- `options::CondGParams`: Options for the solver (see [`CondG_options`]).
+- `options::CondGOptions`: Options for the solver (see [`CondG_options`]).
 
 # Keywords
 - `lb::Union{Nothing, AbstractVector, Number}`: Lower bounds on variables.
@@ -79,13 +152,14 @@ where f: R^n -> R^m is a smooth vector-valued function, and h: R^n -> R^m is a c
 """
 
 
-function CondG(evalf::Function, evalJf::Function, A::Vector{<:AbstractMatrix{T}}, delta::T, 
-    x0::AbstractVector{T}, options::CondGParams=CondG_options(); 
+function CondG(evalf::Function, evalJf::Function, A::Vector{<:AbstractMatrix{T}}, delta::T,
+    x0::AbstractVector{T}, options::CondGOptions=CondG_options();
     lb::Union{Nothing,AbstractVector{T},Number}=nothing, 
     ub::Union{Nothing,AbstractVector{T},Number}=nothing,
     callback=noop_callback) where {T<:AbstractFloat}
 
     start_time = time()
+    params = _convert_condg_options(T, options)
 
     n = length(x0)
     m = length(A)
@@ -151,21 +225,21 @@ function CondG(evalf::Function, evalJf::Function, A::Vector{<:AbstractMatrix{T}}
 
     function subproblem(x, JF, h, method::Symbol)
         if method == :condg
-            theta, p, success, message = subproblem_condg(x, JF, h, SubProbParams; verbose=options.verbose)
+            theta, p, success, message = subproblem_condg(x, JF, h, SubProbParams; verbose=params.verbose)
             if !success
                 result.success = false
                 result.message = "The subproblem of CondG failed: " * message
             end
             return theta, p
         elseif method == :proxgrad
-            theta, p, success, message = subproblem_proxgrad(x, JF, h, SubProbParams; verbose=options.verbose)
+            theta, p, success, message = subproblem_proxgrad(x, JF, h, SubProbParams; verbose=params.verbose)
             if !success
                 result.success = false
                 result.message = "The subproblem of ProxGrad failed: " * message
             end
             return theta, p
         elseif method == :pdfpm
-            theta, p, success, message = subproblem_pdfpm(x, JF, h, SubProbParams; verbose=options.verbose)
+            theta, p, success, message = subproblem_pdfpm(x, JF, h, SubProbParams; verbose=params.verbose)
             if !success
                 result.success = false
                 result.message = "The subproblem of PDFPM failed: " * message
@@ -179,24 +253,23 @@ function CondG(evalf::Function, evalJf::Function, A::Vector{<:AbstractMatrix{T}}
 
 
 
-    _CondG_optimize!(result, f!, Jf!, h!, m, subproblem, options, callback)
+    _CondG_optimize!(result, f!, Jf!, h!, m, subproblem, params, callback)
     result.total_time = time() - start_time
     return result
 end
 
 """
-    _CondG_optimize!(f!, Jf!, h!, x0, options, callback, result)
+    _CondG_optimize!(result, f!, Jf!, h!, m, subproblem, options, callback)
 
 Internal function that implements the CondG algorithm.
 """
-function _CondG_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::Function, m::Int, subproblem::Function, options::CondGParams, callback::Function)
+function _CondG_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::Function, m::Int, subproblem::Function, options::CondGParams{T}, callback::Function) where {T<:AbstractFloat}
     
 
     # Initialize optimization
     x = copy(result.x)
     n = length(x)
 
-    T = eltype(x)
     Fx = zeros(T, m)
     JF = zeros(T, m, n)
     h  = zeros(T, m)
