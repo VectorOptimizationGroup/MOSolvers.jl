@@ -152,27 +152,28 @@ where f: R^n -> R^m is a smooth vector-valued function, and h: R^n -> R^m is a c
 - `options::ProxGradOptions`: Options for the solver (see [`ProxGrad_options`]).
 
 # Keywords
-- `lb::Union{Nothing, AbstractVector, Number}`: Lower bounds on variables.
-- `ub::Union{Nothing, AbstractVector, Number}`: Upper bounds on variables.
+- `lb`: Lower-bounds vector. If omitted, variables are unbounded below.
+- `ub`: Upper-bounds vector. If omitted, variables are unbounded above.
 - `callback::Function`: Optional callback executed every iteration, signature `callback(iter, result) -> Bool`. Return `true` to stop.
 
 # Returns
 - `result::OptimResult`: Optimization result containing solution `x`, objective values `Fval`, and other statistics.
 """
 
-function ProxGrad(evalf::Function, evalJf::Function, A::Vector{<:AbstractMatrix{T}}, delta::T,
+function ProxGrad(evalf::Function, evalJf::Function, A::AbstractVector{<:AbstractMatrix}, delta::Real,
     x0::AbstractVector{T}, options::ProxGradOptions=ProxGrad_options();
-    lb::Union{Nothing,AbstractVector{T},Number}=nothing, 
-    ub::Union{Nothing,AbstractVector{T},Number}=nothing,
+    lb=nothing,
+    ub=nothing,
     callback=noop_callback) where {T<:AbstractFloat}
 
     start_time = time()
     params = _convert_proxgrad_options(T, options)
+    x0_vec = Vector{T}(x0)
+    delta_T = T(delta)
+    isfinite(delta_T) && delta_T >= zero(T) || throw(ArgumentError("`delta` must be finite and nonnegative."))
 
-    n = length(x0)
+    n = length(x0_vec)
     m = length(A)
-    A2n = [[A[i]; -A[i]] for i in 1:m]
-    b2n = [delta * ones(2*n) for i in 1:m]
 
     # Validations
     @assert m > 0 "At least one matrix A must be provided"
@@ -181,9 +182,13 @@ function ProxGrad(evalf::Function, evalJf::Function, A::Vector{<:AbstractMatrix{
         @assert size(A[i], 1) == n && size(A[i], 2) == n "Matrix A[$i] must be square of size $n×$n"
     end
 
+    A_T = [T.(A[i]) for i in 1:m]
+    A2n = [[A_T[i]; -A_T[i]] for i in 1:m]
+    b2n = [delta_T * ones(T, 2*n) for i in 1:m]
+
     # Process bounds
-    lb_vec = process_bounds(lb, n, T(-Inf))
-    ub_vec = process_bounds(ub, n, T(Inf))
+    lb_vec = _convert_solver_bounds(T, lb, n, T(-Inf), :lb)
+    ub_vec = _convert_solver_bounds(T, ub, n, T(Inf), :ub)
 
     # Check if lb <= ub
     for i in 1:n
@@ -192,8 +197,8 @@ function ProxGrad(evalf::Function, evalJf::Function, A::Vector{<:AbstractMatrix{
 
     # Check if x0 is within bounds
     for i in 1:n
-        if !(lb_vec[i] <= x0[i] <= ub_vec[i])
-            @warn "x0[$i] = $(x0[i]) is out of bounds [$(lb_vec[i]), $(ub_vec[i])]"
+        if !(lb_vec[i] <= x0_vec[i] <= ub_vec[i])
+            @warn "x0[$i] = $(x0_vec[i]) is out of bounds [$(lb_vec[i]), $(ub_vec[i])]"
         end
     end
 
@@ -201,7 +206,7 @@ function ProxGrad(evalf::Function, evalJf::Function, A::Vector{<:AbstractMatrix{
     SubProbParams = SubProblemParams(A2n, b2n, lb_vec, ub_vec)
 
     # Create result structure
-    result = OptimResult(x0, zeros(T, m))
+    result = OptimResult(x0_vec, zeros(T, m))
 
     function f!(f, x)
         result.n_f_evals += 1

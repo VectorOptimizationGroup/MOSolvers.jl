@@ -24,6 +24,7 @@ module MOSolvers
 
     # Include auxiliary functions
     include("utils/solver_utils.jl")
+    include("utils/input_conversion.jl")
     include("utils/linesearch.jl")
     include("utils/evalh.jl")
 

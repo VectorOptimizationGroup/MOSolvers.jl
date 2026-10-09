@@ -201,28 +201,29 @@ This method can use finite differences if the Jacobian `evalJf` is not provided.
 
 # Keywords
 - `evalJf::Union{Nothing, Function}`: Evaluate the Jacobian Jf(x). If `nothing`, finite differences are used.
-- `lb::Union{Nothing, AbstractVector, Number}`: Lower bounds on variables.
-- `ub::Union{Nothing, AbstractVector, Number}`: Upper bounds on variables.
+- `lb`: Lower-bounds vector. If omitted, variables are unbounded below.
+- `ub`: Upper-bounds vector. If omitted, variables are unbounded above.
 - `callback::Function`: Optional callback executed every iteration, signature `callback(iter, result) -> Bool`. Return `true` to stop.
 
 # Returns
 - `result::OptimResult`: Optimization result containing solution `x`, objective values `Fval`, and other statistics.
 """
 
-function PDFPM(evalf::Function, A::Vector{<:AbstractMatrix{T}}, delta::T,
+function PDFPM(evalf::Function, A::AbstractVector{<:AbstractMatrix}, delta::Real,
     x0::AbstractVector{T}, options::PDFPMOptions=PDFPM_options();
     evalJf::Union{Nothing,Function}=nothing,
-    lb::Union{Nothing,AbstractVector{T},Number}=nothing, 
-    ub::Union{Nothing,AbstractVector{T},Number}=nothing,
+    lb=nothing,
+    ub=nothing,
     callback=noop_callback) where {T<:AbstractFloat}
 
     start_time = time()
     params = _convert_pdfpm_options(T, options)
+    x0_vec = Vector{T}(x0)
+    delta_T = T(delta)
+    isfinite(delta_T) && delta_T >= zero(T) || throw(ArgumentError("`delta` must be finite and nonnegative."))
 
-    n = length(x0)
+    n = length(x0_vec)
     m = length(A)
-    A2n = [[A[i]; -A[i]] for i in 1:m]
-    b2n = [delta * ones(2*n) for i in 1:m]
 
     # Validations
     @assert m > 0 "At least one matrix A must be provided"
@@ -231,9 +232,13 @@ function PDFPM(evalf::Function, A::Vector{<:AbstractMatrix{T}}, delta::T,
         @assert size(A[i], 1) == n && size(A[i], 2) == n "Matrix A[$i] must be square of size $n×$n"
     end
 
+    A_T = [T.(A[i]) for i in 1:m]
+    A2n = [[A_T[i]; -A_T[i]] for i in 1:m]
+    b2n = [delta_T * ones(T, 2*n) for i in 1:m]
+
     # Process bounds
-    lb_vec = process_bounds(lb, n, T(-Inf))
-    ub_vec = process_bounds(ub, n, T(Inf))
+    lb_vec = _convert_solver_bounds(T, lb, n, T(-Inf), :lb)
+    ub_vec = _convert_solver_bounds(T, ub, n, T(Inf), :ub)
 
     # Check if lb <= ub
     for i in 1:n
@@ -242,8 +247,8 @@ function PDFPM(evalf::Function, A::Vector{<:AbstractMatrix{T}}, delta::T,
 
     # Check if x0 is within bounds
     for i in 1:n
-        if !(lb_vec[i] <= x0[i] <= ub_vec[i])
-            @warn "x0[$i] = $(x0[i]) is out of bounds [$(lb_vec[i]), $(ub_vec[i])]"
+        if !(lb_vec[i] <= x0_vec[i] <= ub_vec[i])
+            @warn "x0[$i] = $(x0_vec[i]) is out of bounds [$(lb_vec[i]), $(ub_vec[i])]"
         end
     end
 
@@ -251,7 +256,7 @@ function PDFPM(evalf::Function, A::Vector{<:AbstractMatrix{T}}, delta::T,
     SubProbParams = SubProblemParams(A2n, b2n, lb_vec, ub_vec)
 
     # Create result structure
-    result = OptimResult(x0, zeros(T, m))
+    result = OptimResult(x0_vec, zeros(T, m))
 
     function f!(f, x)
         result.n_f_evals += 1
