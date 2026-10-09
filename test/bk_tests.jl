@@ -10,8 +10,8 @@ identity_data(n::Int, m::Int) = ([Matrix{Float64}(I, n, n) for _ in 1:m], ZERO_D
 const _BK_RNG = MersenneTwister(7)
 
 @inline function bk1_problem()
-    lb = fill(-5.0, 2)
-    ub = fill(10.0, 2)
+    lb = fill(-500.0, 2)
+    ub = fill(10000.0, 2)
     λ = rand(_BK_RNG)
     x0 = λ .* lb .+ (1 - λ) .* ub
 
