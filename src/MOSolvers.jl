@@ -13,6 +13,9 @@ Each solver has a corresponding options constructor:
 - [`CondG_options`]
 - [`ProxGrad_options`]
 - [`PDFPM_options`]
+
+`CondG` and `ProxGrad` take their line search from MultiObjectiveLineSearches;
+`BackTracking` and `InitialStatic` are reexported.
 """
 module MOSolvers
 
@@ -21,11 +24,14 @@ module MOSolvers
     using SparseArrays
     using JuMP, HiGHS, Ipopt
     using Printf
+    import MultiObjectiveLineSearches
+    using MultiObjectiveLineSearches: BackTracking, InitialStatic
 
     # Include auxiliary functions
     include("utils/solver_utils.jl")
     include("utils/input_conversion.jl")
     include("utils/linesearch.jl")
+    include("internals/linesearch_interface.jl")
     include("utils/evalh.jl")
 
     # Include subproblems
@@ -42,6 +48,9 @@ module MOSolvers
 
     # Export solvers
     export CondG, CondG_options, ProxGrad, ProxGrad_options, PDFPM, PDFPM_options
+
+    # Reexport the line-search configuration used by CondG and ProxGrad
+    export BackTracking, InitialStatic
 
     # Export support-function utilities
     export SubProblemParams, evalh!, clear_evalh_cache!, set_evalh_highs_limits!

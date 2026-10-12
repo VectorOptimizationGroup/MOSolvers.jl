@@ -133,7 +133,8 @@ function _convert_proxgrad_options(::Type{T}, options::ProxGradOptions) where {T
 end
 
 """
-    ProxGrad(evalf, evalJf, A, delta, x0, options; lb=nothing, ub=nothing, callback=noop_callback)
+    ProxGrad(evalf, evalJf, A, delta, x0, options; lb=nothing, ub=nothing, callback=noop_callback,
+             linesearch=BackTracking())
 
 Solve a composite multi-objective optimization problem using the Proximal Gradient method.
 
@@ -155,6 +156,10 @@ where f: R^n -> R^m is a smooth vector-valued function, and h: R^n -> R^m is a c
 - `lb`: Lower-bounds vector. If omitted, variables are unbounded below.
 - `ub`: Upper-bounds vector. If omitted, variables are unbounded above.
 - `callback::Function`: Optional callback executed every iteration, signature `callback(iter, result) -> Bool`. Return `true` to stop.
+- `linesearch = BackTracking()`: Line search along `d = p - x`, from
+  MultiObjectiveLineSearches, configured once in the element type of `x0`.
+  Steps must not exceed 1: a larger `maxstep` or initial step raises
+  `ArgumentError` before any evaluation.
 
 # Returns
 - `result::OptimResult`: Optimization result containing solution `x`, objective values `Fval`, and other statistics.
@@ -164,7 +169,8 @@ function ProxGrad(evalf::Function, evalJf::Function, A::AbstractVector{<:Abstrac
     x0::AbstractVector{T}, options::ProxGradOptions=ProxGrad_options();
     lb=nothing,
     ub=nothing,
-    callback=noop_callback) where {T<:AbstractFloat}
+    callback=noop_callback,
+    linesearch=BackTracking()) where {T<:AbstractFloat}
 
     start_time = time()
     params = _convert_proxgrad_options(T, options)
@@ -263,17 +269,18 @@ function ProxGrad(evalf::Function, evalJf::Function, A::AbstractVector{<:Abstrac
         end
     end
 
-    _ProxGrad_optimize!(result, f!, Jf!, h!, m, subproblem, params, callback)
+    _ProxGrad_optimize!(result, f!, Jf!, h!, m, subproblem, params, callback; linesearch)
     result.total_time = time() - start_time
     return result
 end
 
 """
-    _ProxGrad_optimize!(result, f!, Jf!, h!, m, subproblem, options, callback)
+    _ProxGrad_optimize!(result, f!, Jf!, h!, m, subproblem, options, callback; linesearch)
 
 Internal function that implements the ProxGrad algorithm.
 """
-function _ProxGrad_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::Function, m::Int, subproblem::Function, options::ProxGradParams{T}, callback::Function) where {T<:AbstractFloat}
+function _ProxGrad_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::Function, m::Int, subproblem::Function, options::ProxGradParams{T}, callback::Function; linesearch) where {T<:AbstractFloat}
+    ls = configure_linesearch(linesearch, T)
     
     # Initialize optimization
     x = copy(result.x)

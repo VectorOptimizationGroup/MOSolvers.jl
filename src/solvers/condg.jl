@@ -124,7 +124,8 @@ function _convert_condg_options(::Type{T}, options::CondGOptions) where {T<:Abst
 end
 
 """
-    CondG(evalf, evalJf, A, delta, x0, options; lb=nothing, ub=nothing, callback=noop_callback)
+    CondG(evalf, evalJf, A, delta, x0, options; lb=nothing, ub=nothing, callback=noop_callback,
+          linesearch=BackTracking())
 
 Solve a composite multi-objective optimization problem using the Conditional Gradient (CondG) method.
 
@@ -146,6 +147,10 @@ where f: R^n -> R^m is a smooth vector-valued function, and h: R^n -> R^m is a c
 - `lb`: Lower-bounds vector. If omitted, variables are unbounded below.
 - `ub`: Upper-bounds vector. If omitted, variables are unbounded above.
 - `callback::Function`: Optional callback executed every iteration, signature `callback(iter, result) -> Bool`. Return `true` to stop.
+- `linesearch = BackTracking()`: Line search along `d = p - x`, from
+  MultiObjectiveLineSearches, configured once in the element type of `x0`.
+  Steps must not exceed 1: a larger `maxstep` or initial step raises
+  `ArgumentError` before any evaluation.
 
 # Returns
 - `result::OptimResult`: Optimization result containing solution `x`, objective values `Fval`, and other statistics.
@@ -156,7 +161,8 @@ function CondG(evalf::Function, evalJf::Function, A::AbstractVector{<:AbstractMa
     x0::AbstractVector{T}, options::CondGOptions=CondG_options();
     lb=nothing,
     ub=nothing,
-    callback=noop_callback) where {T<:AbstractFloat}
+    callback=noop_callback,
+    linesearch=BackTracking()) where {T<:AbstractFloat}
 
     start_time = time()
     params = _convert_condg_options(T, options)
@@ -258,17 +264,18 @@ function CondG(evalf::Function, evalJf::Function, A::AbstractVector{<:AbstractMa
 
 
 
-    _CondG_optimize!(result, f!, Jf!, h!, m, subproblem, params, callback)
+    _CondG_optimize!(result, f!, Jf!, h!, m, subproblem, params, callback; linesearch)
     result.total_time = time() - start_time
     return result
 end
 
 """
-    _CondG_optimize!(result, f!, Jf!, h!, m, subproblem, options, callback)
+    _CondG_optimize!(result, f!, Jf!, h!, m, subproblem, options, callback; linesearch)
 
 Internal function that implements the CondG algorithm.
 """
-function _CondG_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::Function, m::Int, subproblem::Function, options::CondGParams{T}, callback::Function) where {T<:AbstractFloat}
+function _CondG_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::Function, m::Int, subproblem::Function, options::CondGParams{T}, callback::Function; linesearch) where {T<:AbstractFloat}
+    ls = configure_linesearch(linesearch, T)
     
 
     # Initialize optimization

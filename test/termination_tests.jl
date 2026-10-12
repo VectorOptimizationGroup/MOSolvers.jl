@@ -36,10 +36,10 @@ function termination_case(method; verbose=0, max_iter=1, converge_at=typemax(Int
               stop_criteria=criterion)
     if method == :condg
         options = MOSolvers._convert_condg_options(Float64, CondG_options(; kwargs...))
-        MOSolvers._CondG_optimize!(result, f!, Jf!, h!, 1, subproblem, options, callback)
+        MOSolvers._CondG_optimize!(result, f!, Jf!, h!, 1, subproblem, options, callback; linesearch=BackTracking())
     elseif method == :proxgrad
         options = MOSolvers._convert_proxgrad_options(Float64, ProxGrad_options(; kwargs...))
-        MOSolvers._ProxGrad_optimize!(result, f!, Jf!, h!, 1, subproblem, options, callback)
+        MOSolvers._ProxGrad_optimize!(result, f!, Jf!, h!, 1, subproblem, options, callback; linesearch=BackTracking())
     else
         options = MOSolvers._convert_pdfpm_options(Float64, PDFPM_options(; kwargs...))
         MOSolvers._PDFPM_optimize!(result, f!, Jf!, true, h!, 1, subproblem, options, callback)

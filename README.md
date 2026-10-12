@@ -15,10 +15,11 @@ If you use this package in your research, please cite the following paper:
 
 ## Installation
 
-This package is currently not registered in the General Julia registry. You can install it directly from GitHub using the package manager mode (press `]`) or `Pkg`:
+This package is currently not registered in the General Julia registry, and neither is its dependency [MultiObjectiveLineSearches.jl](https://github.com/VectorOptimizationGroup/MultiObjectiveLineSearches.jl). Add the dependency first, then the package, using the package manager mode (press `]`) or `Pkg`:
 
 ```julia
 import Pkg
+Pkg.add(url="https://github.com/VectorOptimizationGroup/MultiObjectiveLineSearches.jl")
 Pkg.add(url="https://github.com/VectorOptimizationGroup/MOSolvers.jl")
 ```
 
@@ -36,6 +37,7 @@ Next, decide whether you want to install the package in a specific Julia project
 
 ```julia
 import Pkg
+Pkg.add(url="https://github.com/VectorOptimizationGroup/MultiObjectiveLineSearches.jl")
 Pkg.add(path="/path/to/MOSolvers.jl")
 ```
 
