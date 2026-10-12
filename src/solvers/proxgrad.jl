@@ -298,21 +298,21 @@ function _ProxGrad_optimize!(result::OptimResult, f!::Function, Jf!::Function, h
     # Start timing to check for maximum time
     start_time = time()
 
-    # Define the composite objective function F(y) = f(y) + h(y) (in-place)
-    function F(y; m::Int=m)
+    # Composite objective F(y) = f(y) + h(y) for the line search: fill Fy and
+    # return nothing, or return the failure message
+    function F!(Fy, y)
         try
             f!(Fx_ls, y)
             h!(h_ls, y)
             if !result.success
-                return nothing, result.message
+                return result.message
             end
-            F_ls .= Fx_ls
-            F_ls .+= h_ls
-            return F_ls, nothing
+            Fy .= Fx_ls .+ h_ls
+            return nothing
         catch e
             result.success = false
             result.message = "Error evaluating F: " * string(e)
-            return nothing, result.message
+            return result.message
         end
     end
     
@@ -361,8 +361,11 @@ function _ProxGrad_optimize!(result::OptimResult, f!::Function, Jf!::Function, h
         return result
     end
 
-    # Reusable direction buffer
+    # Reusable direction and line-search buffers
     d = similar(x)
+    x_trial = similar(x)
+    F_trial = zeros(T, m)
+    slopes = zeros(T, m)
     for iter in 1:options.max_iter
         if time() - start_time >= options.max_time
             result.success = false
@@ -370,29 +373,41 @@ function _ProxGrad_optimize!(result::OptimResult, f!::Function, Jf!::Function, h
             return result
         end
 
+        # x is critical when θ = 0; the line search needs a finite, nonzero θ
+        if iszero(T(theta))
+            result.success = true
+            result.message = "The solution was found with |θ_ProxGrad| = 0"
+            return result
+        elseif !isfinite(T(theta))
+            result.success = false
+            result.message = "The subproblem of ProxGrad returned θ = $theta"
+            return result
+        end
+
         # Define the search direction (reuse buffer)
         d .= p .- x
 
         # Compute the step size
-        line_search_result = armijo(F, x, d, result.Fval, JF, factor=-abs(theta))
-        
-        # If line search failed due to an error in F, the message has already been updated
-        if !line_search_result.success
-            result.message = line_search_result.message
+        ls_result = perform_linesearch!(ls, F!, x, JF, d, theta, result.Fval, x_trial, F_trial, slopes)
+
+        # An evaluation failure already carries its message
+        if !ls_result.success
             result.success = false
+            result.message = ls_result.reason === :evaluation_failure ? ls_result.message :
+                             "Line search failed: " * ls_result.message
             return result
         end
 
-        # Update x (in-place)
-        x .+= line_search_result.stp .* d
+        # Accept the trial point
+        x .= x_trial
 
         norm_progress = T(norm(x - result.x, Inf) / max(1, norm(result.x, Inf)))
 
         # Compute F and JF
         f!(Fx, x)
         Jf!(JF, x)
-        # Reduces the cost of calling h!: h .= F_final - Fx (in-place)
-        h .= line_search_result.F_final
+        # Reduces the cost of calling h!: h .= F_trial - Fx (in-place)
+        h .= F_trial
         h .-= Fx
 
         # Solve the subproblem
@@ -404,7 +419,7 @@ function _ProxGrad_optimize!(result::OptimResult, f!::Function, Jf!::Function, h
         end
 
         # Update
-        update!(result, x=x, Fval=line_search_result.F_final, abs_theta=abs(theta), norm_progress=norm_progress, iter=iter, store_trace=options.store_trace)
+        update!(result, x=x, Fval=F_trial, abs_theta=abs(theta), norm_progress=norm_progress, iter=iter, store_trace=options.store_trace)
 
         if options.verbose > 0
             if result.iter == 0 || (result.iter % options.print_interval == 0)

@@ -5,13 +5,15 @@ using Test
 # objective and line search still run; every proposed step halves x.
 function termination_case(method; verbose=0, max_iter=1, converge_at=typemax(Int),
                           fail_at=0, fail_h=false, fail_search=false,
-                          abort=false, max_time=Inf, norm_progress=false)
+                          abort=false, max_time=Inf, norm_progress=false, ftol=1.0,
+                          theta_values=Dict{Int,Float64}(), ascent=false,
+                          linesearch=BackTracking())
     result = MOSolvers.OptimResult([2.0], [0.0])
     calls = Ref(0)
     callbacks = Int[]
     function f!(f, x)
         fail_search && x[1] != 2.0 && error("injected evaluation failure")
-        f[1] = x[1]^2 / 2
+        f[1] = (ascent ? -1 : 1) * x[1]^2 / 2
     end
     Jf!(J, x; lambda=nothing) = (J[1, 1] = x[1])
     function h!(h, x)
@@ -27,19 +29,19 @@ function termination_case(method; verbose=0, max_iter=1, converge_at=typemax(Int
             result.success = false
             result.message = "injected subproblem failure"
         end
-        theta = calls[] >= converge_at ? 0.0 : -1.0
+        theta = get(theta_values, calls[], calls[] >= converge_at ? 0.0 : -1.0)
         return theta, x ./ 2
     end
     callback(iter, result) = (push!(callbacks, iter); abort)
     criterion = norm_progress ? :NormProgress : method
-    kwargs = (; verbose, max_iter, max_time, opt_tol=1e-8, ftol=1.0,
+    kwargs = (; verbose, max_iter, max_time, opt_tol=1e-8, ftol,
               stop_criteria=criterion)
     if method == :condg
         options = MOSolvers._convert_condg_options(Float64, CondG_options(; kwargs...))
-        MOSolvers._CondG_optimize!(result, f!, Jf!, h!, 1, subproblem, options, callback; linesearch=BackTracking())
+        MOSolvers._CondG_optimize!(result, f!, Jf!, h!, 1, subproblem, options, callback; linesearch)
     elseif method == :proxgrad
         options = MOSolvers._convert_proxgrad_options(Float64, ProxGrad_options(; kwargs...))
-        MOSolvers._ProxGrad_optimize!(result, f!, Jf!, h!, 1, subproblem, options, callback; linesearch=BackTracking())
+        MOSolvers._ProxGrad_optimize!(result, f!, Jf!, h!, 1, subproblem, options, callback; linesearch)
     else
         options = MOSolvers._convert_pdfpm_options(Float64, PDFPM_options(; kwargs...))
         MOSolvers._PDFPM_optimize!(result, f!, Jf!, true, h!, 1, subproblem, options, callback)
@@ -127,5 +129,36 @@ end
         if !iszero(x0[1])
             @test results[1].message == "Maximum number of iterations reached 0"
         end
+    end
+end
+
+@testset "Line search inside CondG and ProxGrad" begin
+    for method in (:condg, :proxgrad)
+        name = method == :condg ? "CondG" : "ProxGrad"
+        # θ = 0 when norm_progress does not stop the run: x is critical, no search.
+        result, _ = termination_case(method; max_iter=3, converge_at=2, norm_progress=true, ftol=0.1)
+        @test result.success
+        @test result.message == "The solution was found with |θ_$name| = 0"
+        @test result.iter == 1 && result.x == [1.0] && result.Fval == [0.5]
+
+        # A nonfinite θ ends the run before the search.
+        for bad in (NaN, -Inf)
+            result, _ = termination_case(method; max_iter=3, theta_values=Dict(2 => bad))
+            @test !result.success
+            @test result.message == "The subproblem of $name returned θ = $bad"
+            @test result.iter == 1 && result.x == [1.0]
+        end
+
+        # A search failure keeps the last accepted point and reports its diagnostic.
+        result, _ = termination_case(method; max_iter=3, ascent=true,
+                                     linesearch=BackTracking(max_iters=2))
+        @test !result.success
+        @test result.message == "Line search failed: Maximum number of backtracking reductions reached"
+        @test result.iter == 0 && result.x == [2.0] && result.Fval == [-2.0]
+
+        # The configured search sets the accepted step and objective values.
+        spec = BackTracking(initial_step=InitialStatic(alpha=0.5))
+        result, _ = termination_case(method; linesearch=spec)
+        @test result.iter == 1 && result.x == [1.5] && result.Fval == [1.125]
     end
 end

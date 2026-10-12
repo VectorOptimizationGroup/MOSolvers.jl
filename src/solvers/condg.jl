@@ -289,13 +289,13 @@ function _CondG_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::
     # Preallocated buffers for line search evaluations F(y) = f(y) + h(y)
     Fx_ls = zeros(T, m)
     h_ls  = zeros(T, m)
-    F_ls  = zeros(T, m)
 
     # Start timing to check for maximum time
     start_time = time()
 
-    # Define the composite objective function F(x) = f(x) + h(x)
-    function F(y; m::Int=m)
+    # Composite objective F(y) = f(y) + h(y) for the line search: fill Fy and
+    # return nothing, or return the failure message
+    function F!(Fy, y)
         # Use try-catch to capture any error during evaluation
         try
             f!(Fx_ls, y)
@@ -303,17 +303,16 @@ function _CondG_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::
 
             # Check if h! failed
             if !result.success
-                return nothing, result.message
+                return result.message
             end
 
-            F_ls .= Fx_ls
-            F_ls .+= h_ls
-            return F_ls, nothing
+            Fy .= Fx_ls .+ h_ls
+            return nothing
         catch e
             # Capture any other error that may occur
             result.success = false
             result.message = "Error evaluating F: " * string(e)
-            return nothing, result.message
+            return result.message
         end
     end
     
@@ -355,8 +354,11 @@ function _CondG_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::
         return result
     end
 
-    # Direction buffer (reused)
+    # Direction and line-search buffers (reused)
     d = similar(x)
+    x_trial = similar(x)
+    F_trial = zeros(T, m)
+    slopes = zeros(T, m)
 
     for iter in 1:options.max_iter
         if time() - start_time >= options.max_time
@@ -365,28 +367,41 @@ function _CondG_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::
             return result
         end
 
+        # x is critical when θ = 0; the line search needs a finite, nonzero θ
+        if iszero(T(theta))
+            result.success = true
+            result.message = "The solution was found with |θ_CondG| = 0"
+            return result
+        elseif !isfinite(T(theta))
+            result.success = false
+            result.message = "The subproblem of CondG returned θ = $theta"
+            return result
+        end
+
         # Define the search direction (reuse buffer)
         d .= p .- x
 
         # Compute the step size
-        line_search_result = armijo(F, x, d, result.Fval, JF, factor=-abs(theta))
+        ls_result = perform_linesearch!(ls, F!, x, JF, d, theta, result.Fval, x_trial, F_trial, slopes)
 
-        if !line_search_result.success
-            result.message = line_search_result.message
+        # An evaluation failure already carries its message
+        if !ls_result.success
             result.success = false
+            result.message = ls_result.reason === :evaluation_failure ? ls_result.message :
+                             "Line search failed: " * ls_result.message
             return result
         end
 
-        # Update x in-place
-        x .+= line_search_result.stp .* d
+        # Accept the trial point
+        x .= x_trial
 
         norm_progress = T(norm(x - result.x, Inf) / max(1, norm(result.x, Inf)))
 
         # Compute F and JF
         f!(Fx, x)
         Jf!(JF, x)
-        # Reduces the cost of calling h!: h .= F_final - Fx (in-place)
-        h .= line_search_result.F_final
+        # Reduces the cost of calling h!: h .= F_trial - Fx (in-place)
+        h .= F_trial
         h .-= Fx
 
         # Solve the subproblem
@@ -398,7 +413,7 @@ function _CondG_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::
         end
 
         # Update
-        update!(result, x=x, Fval=line_search_result.F_final, abs_theta=abs(theta), norm_progress=norm_progress, iter=iter, store_trace=options.store_trace)
+        update!(result, x=x, Fval=F_trial, abs_theta=abs(theta), norm_progress=norm_progress, iter=iter, store_trace=options.store_trace)
 
         if options.verbose > 0
             if result.iter == 0 || (result.iter % options.print_interval == 0)

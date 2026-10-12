@@ -78,3 +78,18 @@ end
     quiet!(Fy, y) = (Fy .= f(y); nothing)
     @test (@inferred MOSolvers.perform_linesearch!(ls, quiet!, x, JF, d, theta, Fx, x_trial, F_trial, slopes)).success
 end
+
+@testset "CondG and ProxGrad in Float32 with real backends" begin
+    # ProxGrad's subproblem returns θ in Float64; the search factor is converted to T.
+    evalf(x) = [x[1]^2 + x[2]^2, (x[1] - 5)^2 + (x[2] - 5)^2]
+    evalJf(x) = [2x[1] 2x[2]; 2(x[1] - 5) 2(x[2] - 5)]
+    A = [Matrix{Float32}(I, 2, 2) for _ in 1:2]
+    x0, bounds = Float32[1000, 2000], (; lb=fill(-500f0, 2), ub=fill(10000f0, 2))
+    kw = (; verbose=0, max_iter=50, opt_tol=1e-6, ftol=1e-6)
+    for result in (CondG(evalf, evalJf, A, 0.0, x0, CondG_options(; kw...); bounds...),
+                   ProxGrad(evalf, evalJf, A, 0.0, x0, ProxGrad_options(; kw...); bounds...))
+        @test result.success
+        @test eltype(result.x) === Float32 && eltype(result.Fval) === Float32
+        @test all(isfinite, result.Fval)
+    end
+end
