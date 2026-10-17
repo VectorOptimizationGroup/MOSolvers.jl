@@ -23,7 +23,7 @@ using Test
     tiny = BackTracking(minstep=1e-50)
     @test MOSolvers.configure_linesearch(tiny, Float64).minstep == 1e-50
     @test_throws ArgumentError MOSolvers.configure_linesearch(tiny, Float32)
-    @test_throws ArgumentError MOSolvers.configure_linesearch(MOSolvers.ArmijoParams(), Float64)
+    @test_throws ArgumentError MOSolvers.configure_linesearch(:unsupported, Float64)
 
     # The solvers reject the line search before evaluating anything.
     calls = Ref(0)
@@ -47,25 +47,24 @@ end
     Fx = f(x)
     theta = T(-0.8)
     trials = Vector{T}[]
-    F(y) = (push!(trials, copy(y)); (f(y), nothing))
     F!(Fy, y) = (push!(trials, copy(y)); Fy .= f(y); nothing)
     ls = MOSolvers.configure_linesearch(BackTracking(), T)
     x_trial, F_trial, slopes = similar(x), similar(Fx), similar(Fx)
     inputs = map(copy, (x, Fx, JF))
 
-    # The same trials as armijo, with and without descent for every objective.
+    # Check the solver contract for directions with different component slopes.
     for p in (T[0, 1, 0, 0.5], T[-0.5, 0.25, 0, 0])
         d = p .- x
-        old = MOSolvers.armijo(F, x, d, Fx, JF; factor=-abs(theta))
-        native = copy(trials); empty!(trials)
         new = MOSolvers.perform_linesearch!(ls, F!, x, JF, d, theta, Fx, x_trial, F_trial, slopes)
-        @test isequal(trials, native); empty!(trials)
-        @test slopes == [dot(view(JF, i, :), d) for i in 1:3]
-        @test new.success == old.success && new.nfev == old.nfev
+        @test slopes ≈ JF * d
+        @test new.nfev == length(trials)
+        @test new.success || new.reason in (:minimum_step, :indistinguishable_point, :max_iterations)
         if new.success
-            @test new.alpha === old.stp
-            @test F_trial == old.F_final && x_trial == x .+ new.alpha .* d
+            @test x_trial == x .+ new.alpha .* d
+            @test F_trial == f(x_trial)
+            @test all(F_trial .<= Fx .- ls.c_1 * new.alpha * abs(theta))
         end
+        empty!(trials)
         @test (x, Fx, JF) == inputs
     end
 

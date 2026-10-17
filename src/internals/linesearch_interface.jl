@@ -29,10 +29,7 @@ Returns the `LineSearchResult` of MultiObjectiveLineSearches. On success,
 `x_trial` and `F_trial` hold the accepted point and objective values.
 """
 function perform_linesearch!(ls, F!, x, JF, d, theta, Fx, x_trial, F_trial, slopes)
-    # Row by row, as armijo computes them, so that both searches make the same trials.
-    for i in eachindex(slopes)
-        slopes[i] = dot(view(JF, i, :), d)
-    end
+    mul!(slopes, JF, d)
     return MultiObjectiveLineSearches.perform_linesearch!(ls, F!, x, d, Fx, slopes,
                                                          x_trial, F_trial; factor=-abs(theta))
 end

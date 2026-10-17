@@ -125,3 +125,29 @@ The source code is organized as follows:
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request or open an Issue to discuss improvements or report bugs.
+## Line search
+
+CondG and ProxGrad use [MultiObjectiveLineSearches.jl](https://github.com/VectorOptimizationGroup/MultiObjectiveLineSearches.jl).
+Select the search through a solver keyword; solver options remain separate:
+
+```julia
+using MOSolvers
+search = BackTracking(c_1=1e-4, initial_step=InitialStatic(alpha=0.5))
+# Given evalf, evalJf, A, delta and x0:
+# result = CondG(evalf, evalJf, A, delta, x0, CondG_options(); linesearch=search)
+# result = ProxGrad(evalf, evalJf, A, delta, x0, ProxGrad_options(); linesearch=search)
+```
+
+The search is configured once in the element type of `x0`. Both solvers use
+`d = p - x`, require initial and maximum steps at most one, and reject invalid
+settings before evaluating the objectives. Interpolation uses `JF*d` from the
+smooth part; sufficient decrease uses `factor = -abs(theta)` for the composite
+objectives. Trial buffers become accepted state only after search success.
+Evaluation errors retain the evaluator message; other failures report
+`Line search failed: ...`. A zero `theta` terminates successfully; a nonfinite
+`theta` terminates with a subproblem diagnostic. PDFPM keeps its own inner loop.
+
+The former internal `armijo` API is no longer loaded or distributed. Use the
+`linesearch` keyword instead. Local historical copies of `src/utils/linesearch.jl`
+may remain, but their functions must not be used. Historical tests are archived
+in the separate local ResearchMemory repository, outside the active test suite.
