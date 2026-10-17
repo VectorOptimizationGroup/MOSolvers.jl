@@ -159,7 +159,7 @@ function evalh!(h::AbstractVector{T}, x::AbstractVector{T}, SubProbParams::SubPr
             h[j] = objective_value(mdl)
         else
             @warn "ERROR: Linear program could not be solved! Status: $(ts)"
-            return false, "Failed evaluating h_$j(x^k)."
+            return false, "Failed evaluating h_$j(x^k): HiGHS returned $ts."
         end
     end
 

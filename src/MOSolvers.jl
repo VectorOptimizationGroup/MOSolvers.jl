@@ -29,6 +29,7 @@ module MOSolvers
 
     # Include auxiliary functions
     include("utils/solver_utils.jl")
+    include("internals/termination.jl")
     include("utils/input_conversion.jl")
     include("internals/linesearch_interface.jl")
     include("utils/evalh.jl")
@@ -47,6 +48,7 @@ module MOSolvers
 
     # Export solvers
     export CondG, CondG_options, ProxGrad, ProxGrad_options, PDFPM, PDFPM_options
+    export converged
 
     # Reexport the line-search configuration used by CondG and ProxGrad
     export BackTracking, InitialStatic

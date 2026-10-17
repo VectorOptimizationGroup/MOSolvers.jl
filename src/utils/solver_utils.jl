@@ -9,7 +9,8 @@ Container structure holding the results produced by an optimization solver.
 - `x_init::Vector{T}`: Initial point provided to the solver.
 - `F_init::Vector{T}`: Value of the composite objective at `x_init`.
 - `iter::Int`: Number of iterations performed.
-- `abs_theta::T`: Absolute value of the optimality measure θ at the last iterate.
+- `abs_theta::T`: Absolute value of the model measure θ at the returned iterate;
+  `NaN` when it has not been computed there (PDFPM's proximal-step exit).
 - `norm_progress::T`: Normalised ∞-norm progress between consecutive iterates.
 - `n_f_evals::Int`: Number of objective evaluations (`f!`).
 - `n_Jf_evals::Int`: Number of Jacobian evaluations (`Jf!`).
@@ -19,7 +20,7 @@ Container structure holding the results produced by an optimization solver.
 - `Fval_trace::Vector{Vector{T}}`: History of `Fval` values when tracing is enabled.
 - `abs_theta_trace::Vector{T}`: History of `abs_theta` values when tracing is enabled.
 - `norm_progress_trace::Vector{T}`: History of `norm_progress` values when tracing is enabled.
-- `success::Bool`: `true` if the solver terminated successfully, `false` otherwise.
+- `status::Symbol`: Termination cause; see [`converged`](@ref).
 - `message::String`: Human-readable termination or error message.
 """
 mutable struct OptimResult{T<:AbstractFloat}
@@ -38,7 +39,7 @@ mutable struct OptimResult{T<:AbstractFloat}
     Fval_trace::Vector{Vector{T}}
     abs_theta_trace::Vector{T}
     norm_progress_trace::Vector{T}
-    success::Bool
+    status::Symbol
     message::String
 end
 
@@ -54,7 +55,7 @@ function OptimResult(x0::AbstractVector{T}, Fval::AbstractVector{T}) where {T<:A
         copy(x0),               # x_init
         copy(Fval),             # F_init
         0,                      # iter
-        T(Inf),                 # abs_theta
+        T(NaN),                 # abs_theta (not yet computed)
         T(NaN),                 # norm_progress
         0,                      # n_f_evals
         0,                      # n_Jf_evals
@@ -64,7 +65,7 @@ function OptimResult(x0::AbstractVector{T}, Fval::AbstractVector{T}) where {T<:A
         Vector{Vector{T}}(),    # Fval_trace
         T[],                    # abs_theta_trace
         T[],                    # norm_progress_trace
-        true,                   # success
+        :not_started,           # status
         "Optimization not started")  # message
 end
 

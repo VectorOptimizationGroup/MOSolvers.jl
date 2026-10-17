@@ -95,7 +95,7 @@ struct PDFPMParams{T<:AbstractFloat}
     sigma::T # Sigma parameter for regularization
     alpha::T # Alpha parameter for sufficient decrease
     max_subproblem_iter::Int # Maximum subproblem iterations
-    lambda_factor::Union{Function, T} # Percentage in [0,1] of the interval [0, ϵ/(σ√n)] used as λ via λ = max(lambda_factor * ϵ/(σ√n), λ_min). If a Function, it is evaluated at runtime; recommended signature: lambda_factor(; iter, sigma, n) -> Real in [0,1]
+    lambda_factor::Union{Function, T} # Percentage in [0,1] of the interval [0, ϵ/(σ√n)] used as λ via λ = max(lambda_factor * ϵ/(σ√n), λ_min). If a Function, it is evaluated at runtime; called as lambda_factor(; iter); the return value is converted to T
     lambda_min::T # Minimum lambda for finite differences
 end
 
@@ -122,7 +122,7 @@ internally as a `Float64`.
 - `sigma::Real = 1.0`: Regularization parameter σ.
 - `alpha::Real = 0.1`: Parameter α for sufficient decrease.
 - `max_subproblem_iter::Integer = 200`: Maximum subproblem iterations.
-- `lambda_factor::Union{Real,Function} = 0.1`: Factor to determine finite difference step.
+- `lambda_factor::Union{Real,Function} = 0.1`: Factor for the finite-difference step. Numeric values are clamped to `[0, 1]`; functions are called as `lambda_factor(; iter)`.
 - `lambda_min::Real = 1e-12`: Minimum finite difference step λ.
 
 # Returns
@@ -203,12 +203,11 @@ This method can use finite differences if the Jacobian `evalJf` is not provided.
 - `evalJf::Union{Nothing, Function}`: Evaluate the Jacobian Jf(x). If `nothing`, finite differences are used.
 - `lb`: Lower-bounds vector. If omitted, variables are unbounded below.
 - `ub`: Upper-bounds vector. If omitted, variables are unbounded above.
-- `callback::Function`: Optional callback executed every iteration, signature `callback(iter, result) -> Bool`. Return `true` to stop.
+- `callback::Function`: Called after a nonconverged outer iteration as `callback(iter, result)`. Return exactly `true` to stop.
 
 # Returns
 - `result::OptimResult`: Optimization result containing solution `x`, objective values `Fval`, and other statistics.
 """
-
 function PDFPM(evalf::Function, A::AbstractVector{<:AbstractMatrix}, delta::Real,
     x0::AbstractVector{T}, options::PDFPMOptions=PDFPM_options();
     evalJf::Union{Nothing,Function}=nothing,
@@ -256,7 +255,7 @@ function PDFPM(evalf::Function, A::AbstractVector{<:AbstractMatrix}, delta::Real
     SubProbParams = SubProblemParams(A2n, b2n, lb_vec, ub_vec)
 
     # Create result structure
-    result = OptimResult(x0_vec, zeros(T, m))
+    result = OptimResult(x0_vec, fill(T(NaN), m))
 
     function f!(f, x)
         result.n_f_evals += 1
@@ -278,51 +277,28 @@ function PDFPM(evalf::Function, A::AbstractVector{<:AbstractMatrix}, delta::Real
         return Jf
     end
 
-    """	
+    """
     Create the function
                     h(x): R^n -> R^m,
                     h(x) = (h_1(x), ..., h_m(x)),
     where h_j(x) := max{<x,z> | z ∈ Z_j} and Z_j := {z ∈ R^n | -δ·e ≤ A_j z ≤ δ·e}  for j = 1, ..., m
     """
 
-    function h!(h, x)
-        success, message = evalh!(h, x, SubProbParams)
-        if !success
-            result.success = false
-            result.message = "evalh! failed: " * message
-        end
-        return h
-    end
+    h!(h, x) = evalh!(h, x, SubProbParams)
 
     function subproblem(x, JF, h, method::Symbol; sigma::T=1.0, B::Union{Nothing, Vector{<:AbstractMatrix{T}}}=nothing)
         if method == :condg
-            theta, p, success, message = subproblem_condg(x, JF, h, SubProbParams; verbose=params.verbose)
-            if !success
-                result.success = false
-                result.message = "The subproblem of CondG failed: " * message
-            end
-            return theta, p
+            return subproblem_condg(x, JF, h, SubProbParams; verbose=params.verbose)
         elseif method == :proxgrad
-            theta, p, success, message = subproblem_proxgrad(x, JF, h, SubProbParams; sigma=sigma, verbose=params.verbose)
-            if !success
-                result.success = false
-                result.message = "The subproblem of ProxGrad failed: " * message
-            end
-            return theta, p
+            return subproblem_proxgrad(x, JF, h, SubProbParams; sigma=sigma, verbose=params.verbose)
         elseif method == :pdfpm
-            theta, p, success, message = subproblem_pdfpm(x, JF, h, SubProbParams; sigma=sigma, B=B, verbose=params.verbose)
-            if !success
-                result.success = false
-                result.message = "The subproblem of PDFPM failed: " * message
-            end
-            return theta, p
+            return subproblem_pdfpm(x, JF, h, SubProbParams; sigma=sigma, B=B, verbose=params.verbose)
         else
             error("The subproblem method is not supported: $method")
         end
     end
 
-    _PDFPM_optimize!(result, f!, Jf!, Jf_is_analytic, h!, m, subproblem, params, callback)
-    result.total_time = time() - start_time
+    _PDFPM_optimize!(result, f!, Jf!, Jf_is_analytic, h!, m, subproblem, params, callback; total_start_time=start_time)
     return result
 end
 
@@ -331,8 +307,11 @@ end
 
 Internal function that implements the PDFPM algorithm.
 """
-function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_is_analytic::Bool, h!::Function, m::Int, subproblem::Function, options::PDFPMParams{T}, callback::Function) where {T<:AbstractFloat}
-    
+function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_is_analytic::Bool, h!::Function, m::Int, subproblem::Function, options::PDFPMParams{T}, callback::Function; total_start_time=time()) where {T<:AbstractFloat}
+
+    result.status = :running
+    result.message = "Optimization in progress"
+
     # Initialize optimization
     x = copy(result.x)
     n = length(x)
@@ -347,7 +326,7 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_i
 
     # Initialize B matrices as identity for each objective
     B = [Matrix{T}(I, n, n) for _ in 1:m]
-    
+
     # Initialize sigma
     sigma = options.sigma
 
@@ -364,7 +343,7 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_i
 
     # Start timing to check for maximum time
     start_time = time()
-    
+
     if options.verbose > 0
         print_optimizer_header("PDFPM", options, n, m)
     end
@@ -372,22 +351,34 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_i
     # Compute F and JF
     f!(Fx, x)
     Jf!(JF, x; lambda=lambda)
-    h!(h, x)
+    success, message = h!(h, x)
 
     # Check if h! failed
-    if !result.success
-        result.message = "h! failed"
-        return result
+    if !success
+        return _finalize_optimization!(result, options, total_start_time, :evaluation_failure,
+                                       "evalh! failed: " * message)
     end
 
     h_prev .= h
 
+    if !all(isfinite, Fx) || !all(isfinite, JF) || !all(isfinite, h)
+        return _finalize_optimization!(result, options, total_start_time, :numerical_failure,
+                                       "Nonfinite initial objective or Jacobian")
+    end
+    result.Fval .= Fx .+ h
+    result.F_init .= result.Fval
+
     # Solve the subproblem
     start_subproblem_time = time()
-    theta, p = subproblem(x, JF, h, :pdfpm; sigma=sigma, B=B)
+    theta, p, success, message = subproblem(x, JF, h, :pdfpm; sigma=sigma, B=B)
     result.subproblem_time += time() - start_subproblem_time
-    if !result.success
-        return result
+    if !success
+        return _finalize_optimization!(result, options, total_start_time, :subproblem_failure,
+                                       "The subproblem of PDFPM failed: " * message)
+    end
+    if !isfinite(T(theta)) || !all(isfinite, p)
+        return _finalize_optimization!(result, options, total_start_time, :numerical_failure,
+                                       "The subproblem of PDFPM returned nonfinite theta or p (theta=$theta)")
     end
 
     # Update result
@@ -402,69 +393,71 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_i
 
     # Stopping criteria
     if result.abs_theta <= options.opt_tol
-        result.success = true
-        result.message = "Solution found at initial point with |θ_PDFPM| ≤ $(options.opt_tol)"
-        return result
+        return _finalize_optimization!(result, options, total_start_time, :optimality_tolerance,
+                                       "Solution found at initial point with |θ_PDFPM| ≤ $(options.opt_tol)")
     end
 
     for iter in 1:options.max_iter
 
         if time() - start_time >= options.max_time
-            result.success = false
-            result.message = "Maximum time reached $(options.max_time)"
-            return result
+            return _finalize_optimization!(result, options, total_start_time, :max_time,
+                                           "Maximum time reached $(options.max_time)")
         end
         # Store previous value of h
         h_prev .= h
-        
+
         for sub_iter in 1:options.max_subproblem_iter
             # Check convergence
             if sigma * norm(p - x) <= options.epsilon
                 x .= p
-                result.success = true
-                result.message = "Solution was found"
+
                 # Update result
                 norm_progress = T(norm(x - result.x, Inf) / max(1, norm(result.x, Inf)))
                 # Compute F in-place: Fx = f(x) + h(x)
                 f!(Fx, x)
-                h!(h, x)
+                success, message = h!(h, x)
                 # Check if h! failed in F evaluation
-                if !result.success
-                    return result
+                if !success
+                    return _finalize_optimization!(result, options, total_start_time, :evaluation_failure,
+                                                   "evalh! failed: " * message)
                 end
                 Fx .+= h
-                #  WARNING: abs_theta is not updated here.
-                update!(result, x=x, Fval=Fx, abs_theta=zero(T), norm_progress=norm_progress, iter=iter, store_trace=options.store_trace)
+                if !all(isfinite, Fx)
+                    return _finalize_optimization!(result, options, total_start_time, :numerical_failure,
+                                                   "Nonfinite objective at the proximal-step stopping point")
+                end
+                # The model measure was computed at the preceding point, not at p.
+                update!(result, x=x, Fval=Fx, abs_theta=T(NaN), norm_progress=norm_progress, iter=iter, store_trace=options.store_trace)
                 if options.verbose > 0
                     if iter == 0 || (iter % options.print_interval == 0)
                         print_table(result)
                     end
-                    @info "Converged at iteration $iter with small tolerance"
                 end
 
-                return result
+                return _finalize_optimization!(result, options, total_start_time, :proximal_step_tolerance,
+                                               "PDFPM proximal step satisfies sigma*norm(p-x) <= epsilon")
             end
 
             # Check sufficient decrease
             f!(Fx, p)
-            h!(h, p)
+            success, message = h!(h, p)
 
             # Check if h! failed in F evaluation
-            if !result.success
-                return result
+            if !success
+                return _finalize_optimization!(result, options, total_start_time, :evaluation_failure,
+                                               "evalh! failed: " * message)
             end
 
             Fx .+= h
 
-            if all(Fx .<= result.Fval .- (options.alpha * options.epsilon^2) / (2 * sigma))
+            if all(isfinite, Fx) && all(Fx .<= result.Fval .- (options.alpha * options.epsilon^2) / (2 * sigma))
                 # Update x
                 x .= p
                 break
             else
                 if sub_iter >= options.max_subproblem_iter
-                    result.success = false
-                    result.message = "The maximum subiteration limit was reached"
-                    return result
+                    return _finalize_optimization!(result, options, total_start_time, :max_subproblem_iter,
+                                                   "The maximum subiteration limit was reached ($(options.max_subproblem_iter)); sigma=$sigma")
                 end
                 sigma = sigma * 2
                 if !Jf_is_analytic
@@ -477,21 +470,29 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_i
                         options.lambda_min
                     )
                     Jf!(JF, x; lambda=lambda)
+                    if !all(isfinite, JF)
+                        return _finalize_optimization!(result, options, total_start_time, :numerical_failure,
+                                                       "Nonfinite finite-difference Jacobian")
+                    end
                 end
             end
             # Check maximum time
             if time() - start_time >= options.max_time
-                result.success = false
-                result.message = "Maximum time reached $(options.max_time)"
-                return result
+                return _finalize_optimization!(result, options, total_start_time, :max_time,
+                                               "Maximum time reached $(options.max_time)")
             end
             # Solve the subproblem
             start_subproblem_time = time()
-            theta, p = subproblem(x, JF, h_prev, :pdfpm; sigma=sigma, B=B)
+            theta, p, success, message = subproblem(x, JF, h_prev, :pdfpm; sigma=sigma, B=B)
             result.subproblem_time += time() - start_subproblem_time
 
-            if !result.success
-                return result
+            if !success
+                return _finalize_optimization!(result, options, total_start_time, :subproblem_failure,
+                                               "The subproblem of PDFPM failed: " * message)
+            end
+            if !isfinite(T(theta)) || !all(isfinite, p)
+                return _finalize_optimization!(result, options, total_start_time, :numerical_failure,
+                                               "The subproblem of PDFPM returned nonfinite theta or p (theta=$theta)")
             end
         end
 
@@ -512,17 +513,26 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_i
 
         JF_prev .= JF
         Jf!(JF, x; lambda=lambda)
-        
+        if !all(isfinite, JF)
+            return _finalize_optimization!(result, options, total_start_time, :numerical_failure,
+                                           "Nonfinite Jacobian after the accepted step")
+        end
+
         # Update B matrices using BFGS
         theta_bfgs = isfinite(theta) ? theta : one(T)  # ensures eps ≈ 1e-6 inside bfgsupdate!
         bfgsupdate!(B, x, result.x, JF, JF_prev, theta_bfgs) # TODO: Check here if the B matrices is ill-conditioned
 
         # Solve the subproblem with multiple iterations
         start_subproblem_time = time()
-        theta, p = subproblem(x, JF, h, :pdfpm; sigma=sigma, B=B)
+        theta, p, success, message = subproblem(x, JF, h, :pdfpm; sigma=sigma, B=B)
         result.subproblem_time += time() - start_subproblem_time
-        if !result.success
-            return result
+        if !success
+            return _finalize_optimization!(result, options, total_start_time, :subproblem_failure,
+                                           "The subproblem of PDFPM failed: " * message)
+        end
+        if !isfinite(T(theta)) || !all(isfinite, p)
+            return _finalize_optimization!(result, options, total_start_time, :numerical_failure,
+                                           "The subproblem of PDFPM returned nonfinite theta or p (theta=$theta)")
         end
         update!(result, x=x, Fval=Fx, abs_theta=abs(theta), norm_progress=norm_progress, iter=iter, store_trace=options.store_trace)
 
@@ -535,33 +545,25 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_i
         # Stopping criteria
         # Test optimality
         if options.stop_criteria == :NormProgress
-            if norm_progress <= options.ftol && result.abs_theta <= options.opt_tol 
-                result.message = "The solution was found using |θ_PDFPM| <= $(options.opt_tol) and norm_progress <= $(options.ftol)"
-                result.success = true
-                return result
+            if norm_progress <= options.ftol && result.abs_theta <= options.opt_tol
+                return _finalize_optimization!(result, options, total_start_time, :optimality_and_progress_tolerance,
+                                               "The solution was found using |θ_PDFPM| <= $(options.opt_tol) and norm_progress <= $(options.ftol)")
             end
         elseif result.abs_theta <= options.opt_tol
-            result.message = "The solution was found using |θ_PDFPM| <= $(options.opt_tol)"
-            result.success = true
-            return result
+            return _finalize_optimization!(result, options, total_start_time, :optimality_tolerance,
+                                           "The solution was found using |θ_PDFPM| <= $(options.opt_tol)")
         end
 
         abort = callback(iter, result)
 
         # External interruption
         if abort === true
-            result.success = false   
-            result.message = "Interrupted by callback"
-            return result
+            return _finalize_optimization!(result, options, total_start_time, :callback,
+                                           "Interrupted by callback")
         end
     end
-    
-    # Only exhaustion reaches this epilogue; other termination causes return above.
-    result.message = "Maximum number of iterations reached $(options.max_iter)"
-    result.success = false
-    if options.verbose > 0
-        @info result.message
-    end
-    
-    return result
+
+    # Only exhaustion reaches this epilogue; other causes return above.
+    return _finalize_optimization!(result, options, total_start_time, :max_iter,
+                                   "Maximum number of iterations reached $(options.max_iter)")
 end

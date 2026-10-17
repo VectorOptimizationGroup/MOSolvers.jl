@@ -37,7 +37,7 @@ end
 
     result = CondG(prob.evalf, prob.evalJf, A, delta, copy(prob.x0), opts; lb=prob.lb, ub=prob.ub)
 
-    @test result.success
+    @test converged(result)
     @test all(isfinite, result.Fval)
     @test all(prob.lb .- 1e-8 .<= result.x .<= prob.ub .+ 1e-8)
 end
@@ -49,7 +49,7 @@ end
 
     result = ProxGrad(prob.evalf, prob.evalJf, A, delta, copy(prob.x0), opts; lb=prob.lb, ub=prob.ub)
 
-    @test result.success
+    @test converged(result)
     @test all(isfinite, result.Fval)
     @test all(prob.lb .- 1e-8 .<= result.x .<= prob.ub .+ 1e-8)
 end
@@ -61,7 +61,7 @@ end
 
     result = PDFPM(prob.evalf, A, delta, copy(prob.x0), opts; evalJf=prob.evalJf, lb=prob.lb, ub=prob.ub)
 
-    @test result.success
+    @test converged(result)
     @test all(isfinite, result.Fval)
     @test all(prob.lb .- 1e-8 .<= result.x .<= prob.ub .+ 1e-8)
 end

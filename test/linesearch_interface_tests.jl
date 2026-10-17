@@ -87,7 +87,7 @@ end
     kw = (; verbose=0, max_iter=50, opt_tol=1e-6, ftol=1e-6)
     for result in (CondG(evalf, evalJf, A, 0.0, x0, CondG_options(; kw...); bounds...),
                    ProxGrad(evalf, evalJf, A, 0.0, x0, ProxGrad_options(; kw...); bounds...))
-        @test result.success
+        @test converged(result)
         @test eltype(result.x) === Float32 && eltype(result.Fval) === Float32
         @test all(isfinite, result.Fval)
     end

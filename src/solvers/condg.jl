@@ -146,7 +146,7 @@ where f: R^n -> R^m is a smooth vector-valued function, and h: R^n -> R^m is a c
 # Keywords
 - `lb`: Lower-bounds vector. If omitted, variables are unbounded below.
 - `ub`: Upper-bounds vector. If omitted, variables are unbounded above.
-- `callback::Function`: Optional callback executed every iteration, signature `callback(iter, result) -> Bool`. Return `true` to stop.
+- `callback::Function`: Called after a nonconverged outer iteration as `callback(iter, result)`. Return exactly `true` to stop.
 - `linesearch = BackTracking()`: Line search along `d = p - x`, from
   MultiObjectiveLineSearches, configured once in the element type of `x0`.
   Steps must not exceed 1: a larger `maxstep` or initial step raises
@@ -155,8 +155,6 @@ where f: R^n -> R^m is a smooth vector-valued function, and h: R^n -> R^m is a c
 # Returns
 - `result::OptimResult`: Optimization result containing solution `x`, objective values `Fval`, and other statistics.
 """
-
-
 function CondG(evalf::Function, evalJf::Function, A::AbstractVector{<:AbstractMatrix}, delta::Real,
     x0::AbstractVector{T}, options::CondGOptions=CondG_options();
     lb=nothing,
@@ -204,7 +202,7 @@ function CondG(evalf::Function, evalJf::Function, A::AbstractVector{<:AbstractMa
     SubProbParams = SubProblemParams(A2n, b2n, lb_vec, ub_vec)
 
     # Create result structure
-    result = OptimResult(x0_vec, zeros(T, m))
+    result = OptimResult(x0_vec, fill(T(NaN), m))
 
     function f!(f, x)
         result.n_f_evals += 1
@@ -218,54 +216,28 @@ function CondG(evalf::Function, evalJf::Function, A::AbstractVector{<:AbstractMa
         return Jf
     end
 
-    """	
+    """
     Create the function
                     h(x): R^n -> R^m,
                     h(x) = (h_1(x), ..., h_m(x)),
     where h_j(x) := max{<x,z> | z ∈ Z_j} and Z_j := {z ∈ R^n | -δ·e ≤ A_j z ≤ δ·e}  for j = 1, ..., m
     """
 
-    function h!(h, x)
-        success, message = evalh!(h, x, SubProbParams)
-        if !success
-            result.success = false
-            result.message = "evalh! failed: " * message
-        end
-        return h
-    end
+    h!(h, x) = evalh!(h, x, SubProbParams)
 
     function subproblem(x, JF, h, method::Symbol)
         if method == :condg
-            theta, p, success, message = subproblem_condg(x, JF, h, SubProbParams; verbose=params.verbose)
-            if !success
-                result.success = false
-                result.message = "The subproblem of CondG failed: " * message
-            end
-            return theta, p
+            return subproblem_condg(x, JF, h, SubProbParams; verbose=params.verbose)
         elseif method == :proxgrad
-            theta, p, success, message = subproblem_proxgrad(x, JF, h, SubProbParams; verbose=params.verbose)
-            if !success
-                result.success = false
-                result.message = "The subproblem of ProxGrad failed: " * message
-            end
-            return theta, p
+            return subproblem_proxgrad(x, JF, h, SubProbParams; verbose=params.verbose)
         elseif method == :pdfpm
-            theta, p, success, message = subproblem_pdfpm(x, JF, h, SubProbParams; verbose=params.verbose)
-            if !success
-                result.success = false
-                result.message = "The subproblem of PDFPM failed: " * message
-            end
-            return theta, p
+            return subproblem_pdfpm(x, JF, h, SubProbParams; verbose=params.verbose)
         else
             error("The subproblem method is not supported: $method")
         end
     end
 
-
-
-
-    _CondG_optimize!(result, f!, Jf!, h!, m, subproblem, params, callback; linesearch)
-    result.total_time = time() - start_time
+    _CondG_optimize!(result, f!, Jf!, h!, m, subproblem, params, callback; linesearch, total_start_time=start_time)
     return result
 end
 
@@ -274,9 +246,11 @@ end
 
 Internal function that implements the CondG algorithm.
 """
-function _CondG_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::Function, m::Int, subproblem::Function, options::CondGParams{T}, callback::Function; linesearch) where {T<:AbstractFloat}
+function _CondG_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::Function, m::Int, subproblem::Function, options::CondGParams{T}, callback::Function; linesearch, total_start_time=time()) where {T<:AbstractFloat}
     ls = configure_linesearch(linesearch, T)
-    
+
+    result.status = :running
+    result.message = "Optimization in progress"
 
     # Initialize optimization
     x = copy(result.x)
@@ -296,26 +270,18 @@ function _CondG_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::
     # Composite objective F(y) = f(y) + h(y) for the line search: fill Fy and
     # return nothing, or return the failure message
     function F!(Fy, y)
-        # Use try-catch to capture any error during evaluation
         try
             f!(Fx_ls, y)
-            h!(h_ls, y)
-
-            # Check if h! failed
-            if !result.success
-                return result.message
-            end
-
+            success, message = h!(h_ls, y)
+            success || return "evalh! failed: " * message
             Fy .= Fx_ls .+ h_ls
             return nothing
         catch e
-            # Capture any other error that may occur
-            result.success = false
-            result.message = "Error evaluating F: " * string(e)
-            return result.message
+            # Preserve the existing policy for evaluator exceptions in the search.
+            return "Error evaluating F: " * string(e)
         end
     end
-    
+
     if options.verbose > 0
         print_optimizer_header("CondG", options, n, m)
     end
@@ -323,19 +289,32 @@ function _CondG_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::
     # Compute F and JF
     f!(Fx, x)
     Jf!(JF, x)
-    h!(h, x)
-    
+    success, message = h!(h, x)
+
     # Check if h! failed
-    if !result.success
-        return result
+    if !success
+        return _finalize_optimization!(result, options, total_start_time, :evaluation_failure,
+                                       "evalh! failed: " * message)
     end
+
+    if !all(isfinite, Fx) || !all(isfinite, JF) || !all(isfinite, h)
+        return _finalize_optimization!(result, options, total_start_time, :numerical_failure,
+                                       "Nonfinite initial objective or Jacobian")
+    end
+    result.Fval .= Fx .+ h
+    result.F_init .= result.Fval
 
     # Solve the subproblem
     start_subproblem_time = time()
-    theta, p = subproblem(x, JF, h, :condg)
+    theta, p, success, message = subproblem(x, JF, h, :condg)
     result.subproblem_time += time() - start_subproblem_time
-    if !result.success
-        return result
+    if !success
+        return _finalize_optimization!(result, options, total_start_time, :subproblem_failure,
+                                       "The subproblem of CondG failed: " * message)
+    end
+    if !isfinite(T(theta)) || !all(isfinite, p)
+        return _finalize_optimization!(result, options, total_start_time, :numerical_failure,
+                                       "The subproblem of CondG returned nonfinite theta or p (theta=$theta)")
     end
 
     update!(result, x=x, abs_theta=abs(theta), Fval=Fx + h, norm_progress=T(NaN), store_trace=options.store_trace)
@@ -349,9 +328,8 @@ function _CondG_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::
 
     # Stopping criteria
     if result.abs_theta <= options.opt_tol
-        result.success = true
-        result.message = "Solution found at initial point with |θ_CondG| ≤ $(options.opt_tol)"
-        return result
+        return _finalize_optimization!(result, options, total_start_time, :optimality_tolerance,
+                                       "Solution found at initial point with |θ_CondG| ≤ $(options.opt_tol)")
     end
 
     # Direction and line-search buffers (reused)
@@ -362,20 +340,17 @@ function _CondG_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::
 
     for iter in 1:options.max_iter
         if time() - start_time >= options.max_time
-            result.success = false
-            result.message = "Maximum time reached $(options.max_time)"
-            return result
+            return _finalize_optimization!(result, options, total_start_time, :max_time,
+                                           "Maximum time reached $(options.max_time)")
         end
 
         # x is critical when θ = 0; the line search needs a finite, nonzero θ
         if iszero(T(theta))
-            result.success = true
-            result.message = "The solution was found with |θ_CondG| = 0"
-            return result
+            return _finalize_optimization!(result, options, total_start_time, :optimality_tolerance,
+                                           "The solution was found with |θ_CondG| = 0")
         elseif !isfinite(T(theta))
-            result.success = false
-            result.message = "The subproblem of CondG returned θ = $theta"
-            return result
+            return _finalize_optimization!(result, options, total_start_time, :numerical_failure,
+                                           "The subproblem of CondG returned θ = $theta")
         end
 
         # Define the search direction (reuse buffer)
@@ -386,10 +361,10 @@ function _CondG_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::
 
         # An evaluation failure already carries its message
         if !ls_result.success
-            result.success = false
-            result.message = ls_result.reason === :evaluation_failure ? ls_result.message :
-                             "Line search failed: " * ls_result.message
-            return result
+            status = ls_result.reason === :evaluation_failure ? :evaluation_failure : :line_search_failure
+            message = ls_result.reason === :evaluation_failure ? ls_result.message :
+                      "Line search failed: " * ls_result.message
+            return _finalize_optimization!(result, options, total_start_time, status, message)
         end
 
         # Accept the trial point
@@ -404,12 +379,22 @@ function _CondG_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::
         h .= F_trial
         h .-= Fx
 
+        if !all(isfinite, Fx) || !all(isfinite, JF) || !all(isfinite, h)
+            return _finalize_optimization!(result, options, total_start_time, :numerical_failure,
+                                           "Nonfinite objective or Jacobian after the accepted step")
+        end
+
         # Solve the subproblem
         start_subproblem_time = time()
-        theta, p = subproblem(x, JF, h, :condg)
+        theta, p, success, message = subproblem(x, JF, h, :condg)
         result.subproblem_time += time() - start_subproblem_time
-        if !result.success
-            return result
+        if !success
+            return _finalize_optimization!(result, options, total_start_time, :subproblem_failure,
+                                           "The subproblem of CondG failed: " * message)
+        end
+        if !isfinite(T(theta)) || !all(isfinite, p)
+            return _finalize_optimization!(result, options, total_start_time, :numerical_failure,
+                                           "The subproblem of CondG returned nonfinite theta or p (theta=$theta)")
         end
 
         # Update
@@ -424,31 +409,25 @@ function _CondG_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::
         # Stopping criteria
         # Test optimality
         if options.stop_criteria == :NormProgress
-            if norm_progress <= options.ftol && result.abs_theta <= options.opt_tol 
-                result.message = "The solution was found using |θ_CondG| <= $(options.opt_tol) and norm_progress <= $(options.ftol)"
-                return result
+            if norm_progress <= options.ftol && result.abs_theta <= options.opt_tol
+                return _finalize_optimization!(result, options, total_start_time, :optimality_and_progress_tolerance,
+                                               "The solution was found using |θ_CondG| <= $(options.opt_tol) and norm_progress <= $(options.ftol)")
             end
         elseif result.abs_theta <= options.opt_tol
-            result.message = "The solution was found using |θ_CondG| <= $(options.opt_tol)"
-            return result
+            return _finalize_optimization!(result, options, total_start_time, :optimality_tolerance,
+                                           "The solution was found using |θ_CondG| <= $(options.opt_tol)")
         end
 
         abort = callback(iter, result)
 
         # External interruption
         if abort === true
-            result.success = false   
-            result.message = "Interrupted by callback"
-            return result
+            return _finalize_optimization!(result, options, total_start_time, :callback,
+                                           "Interrupted by callback")
         end
     end
-    
-    # Only exhaustion reaches this epilogue; other termination causes return above.
-    result.message = "Maximum number of iterations reached $(options.max_iter)"
-    result.success = false
-    if options.verbose > 0
-        @info result.message
-    end
-    
-    return result
+
+    # Only exhaustion reaches this epilogue; other causes return above.
+    return _finalize_optimization!(result, options, total_start_time, :max_iter,
+                                   "Maximum number of iterations reached $(options.max_iter)")
 end
