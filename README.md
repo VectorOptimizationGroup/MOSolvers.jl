@@ -27,3 +27,9 @@ result = ProxGrad(f, Jf, A, 0.0, [3.0], ProxGrad_options(verbose=0);
 converged(result)
 result.x, result.Fval, result.status
 ```
+
+## Documentation
+
+The [documentation](docs/src/index.md) covers the problem formulation, solver
+options, stopping criteria, line searches, API, and references.
+See [docs/README.md](docs/README.md) to browse it on a local server.

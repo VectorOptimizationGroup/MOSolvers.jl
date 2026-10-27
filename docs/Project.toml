@@ -1,0 +1,12 @@
+[deps]
+Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
+DocumenterCitations = "daee34ce-89f3-4625-b898-19384cb65244"
+LiveServer = "16fef848-5104-11e9-1b77-fb7a48bbb589"
+MOSolvers = "b8c76f4e-5d2a-4c7b-8f8a-3a2d9e6c0e16"
+MultiObjectiveLineSearches = "9027f03a-5984-4601-a9fc-20d939aaf152"
+
+[compat]
+Documenter = "1"
+DocumenterCitations = "1"
+LiveServer = "1"
+julia = "1.11"
