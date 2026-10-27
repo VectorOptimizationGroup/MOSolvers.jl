@@ -315,11 +315,13 @@ function PDFPM(evalf::Function, A::AbstractVector{<:AbstractMatrix}, delta::Real
 end
 
 """
-    _PDFPM_optimize!(result, f!, Jf!, Jf_is_analytic, h!, m, subproblem, options, callback)
+    _PDFPM_optimize!(result, f!, Jf!, Jf_is_analytic, h!, m, subproblem, options, callback; initial_B=nothing)
 
-Internal function that implements the PDFPM algorithm.
+Internal function that implements the PDFPM algorithm. `initial_B` replaces the
+identity as the initial curvature matrices; it is copied and is not part of the
+public interface.
 """
-function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_is_analytic::Bool, h!::Function, m::Int, subproblem::Function, options::PDFPMParams{T}, callback::Function; total_start_time=time()) where {T<:AbstractFloat}
+function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_is_analytic::Bool, h!::Function, m::Int, subproblem::Function, options::PDFPMParams{T}, callback::Function; total_start_time=time(), initial_B=nothing) where {T<:AbstractFloat}
 
     result.status = :running
     result.message = "Optimization in progress"
@@ -337,7 +339,7 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_i
     theta = T(NaN)
 
     # Initialize B matrices as identity for each objective
-    B = [Matrix{T}(I, n, n) for _ in 1:m]
+    B = initial_B === nothing ? [Matrix{T}(I, n, n) for _ in 1:m] : [Matrix{T}(Bj) for Bj in initial_B]
 
     # Initialize sigma
     sigma = options.sigma
