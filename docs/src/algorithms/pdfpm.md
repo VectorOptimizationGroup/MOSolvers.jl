@@ -23,15 +23,29 @@ BFGS-like formula.
 | `max_subproblem_iter` | `200` | Maximum candidate attempts per outer iteration |
 | `lambda_factor` | `0.1` | Factor for finite-difference step selection |
 | `lambda_min` | `1e-12` | Minimum finite-difference step |
+| `step_tolerance_rule` | `:epsilon` | Thresholds of the proximal-step and decrease tests |
 
-A candidate passes the decrease test when all objectives satisfy
+With the default `step_tolerance_rule=:epsilon`, a candidate passes the
+decrease test when all objectives satisfy
 
 ```math
-F_j(p)\le F_j(x)-\frac{\alpha\varepsilon^2}{2\sigma}.
+F_j(p)\le F_j(x)-\frac{\alpha\varepsilon^2}{2\sigma},
 ```
 
-The proximal criterion ``\sigma\lVert p-x\rVert_2\le\varepsilon`` returns
-`:proximal_step_tolerance`. That return has `abs_theta=NaN`, since the model
+and the proximal criterion is ``\sigma\lVert p-x\rVert_2\le\varepsilon``.
+With `step_tolerance_rule=:trace_scaled` and
+``T=\max_j\operatorname{tr}(B_j)`` for the curvature matrices of the current
+subproblem, the decrease test is
+
+```math
+F_j(p)\le F_j(x)-\frac{\alpha\varepsilon^2}{32\sigma(1+T)^2},
+```
+
+and the proximal criterion is ``\sigma\lVert p-x\rVert_2<\varepsilon/(4(1+T))``.
+A step norm equal to the threshold stops under `:epsilon` and proceeds to the
+decrease test under `:trace_scaled`.
+
+The proximal criterion returns `:proximal_step_tolerance`. That return has `abs_theta=NaN`, since the model
 measure was not recomputed at the returned candidate.
 
 The default `stop_criteria=:pdfpm` also stops on `abs_theta <= opt_tol`.

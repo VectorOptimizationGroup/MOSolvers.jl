@@ -15,7 +15,8 @@ Each method has an options constructor: [`CondG_options`](@ref),
 | `store_trace` | `false` | Store copies of the reported iterates and measures |
 
 ProxGrad adds `mu`. PDFPM adds `sigma`, `epsilon`, `alpha`,
-`max_subproblem_iter`, `lambda_factor`, and `lambda_min`; see [PDFPM](@ref).
+`max_subproblem_iter`, `lambda_factor`, `lambda_min`, and `step_tolerance_rule`;
+see [PDFPM](@ref).
 CondG and ProxGrad accept a separate `linesearch` keyword; see
 [Line search](@ref backtracking).
 
