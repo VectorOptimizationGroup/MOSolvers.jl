@@ -170,6 +170,7 @@ function _solver_header_pairs(options::PDFPMParams)
         "Max Subprob Iter" => string(options.max_subproblem_iter),
         "Lambda Factor" => lambda_factor_str,
         "Lambda Min" => @sprintf("%.2e", options.lambda_min),
+        "Step Tol Rule" => string(options.step_tolerance_rule),
     ]
 end
 

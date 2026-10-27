@@ -24,6 +24,7 @@ Base.@kwdef struct PDFPMOptions
     max_subproblem_iter::Int = 200
     lambda_factor::Union{Function,Real} = 0.1
     lambda_min::Real = 1e-12
+    step_tolerance_rule::Symbol = :epsilon
 
     function PDFPMOptions(
         verbose,
@@ -40,6 +41,7 @@ Base.@kwdef struct PDFPMOptions
         max_subproblem_iter,
         lambda_factor,
         lambda_min,
+        step_tolerance_rule,
     )
         options = new(
             Int(verbose),
@@ -56,6 +58,7 @@ Base.@kwdef struct PDFPMOptions
             Int(max_subproblem_iter),
             lambda_factor,
             lambda_min,
+            step_tolerance_rule,
         )
         return _validate_pdfpm_options(options)
     end
@@ -81,6 +84,7 @@ Parameters for the Partially Derivative-Free Proximal Method (PDFPM) solver.
 - `max_subproblem_iter::Int`: Maximum number of iterations for the subproblem.
 - `lambda_factor::Union{Function, T}`: Factor to determine the finite difference parameters.
 - `lambda_min::T`: Minimum value for the finite difference parameter λ.
+- `step_tolerance_rule::Symbol`: Proximal-step and sufficient-decrease thresholds (`:epsilon` or `:trace_scaled`).
 """
 struct PDFPMParams{T<:AbstractFloat}
     verbose::Int # Verbose level
@@ -97,6 +101,7 @@ struct PDFPMParams{T<:AbstractFloat}
     max_subproblem_iter::Int # Maximum subproblem iterations
     lambda_factor::Union{Function, T} # Percentage in [0,1] of the interval [0, ϵ/(σ√n)] used as λ via λ = max(lambda_factor * ϵ/(σ√n), λ_min). If a Function, it is evaluated at runtime; called as lambda_factor(; iter); the return value is converted to T
     lambda_min::T # Minimum lambda for finite differences
+    step_tolerance_rule::Symbol # Thresholds of the proximal-step and sufficient-decrease tests
 end
 
 
@@ -124,12 +129,16 @@ internally as a `Float64`.
 - `max_subproblem_iter::Integer = 200`: Maximum subproblem iterations.
 - `lambda_factor::Union{Real,Function} = 0.1`: Factor for the finite-difference step. Numeric values are clamped to `[0, 1]`; functions are called as `lambda_factor(; iter)`.
 - `lambda_min::Real = 1e-12`: Minimum finite difference step λ.
+- `step_tolerance_rule::Symbol = :epsilon`: Thresholds of the proximal-step and sufficient-decrease tests.
+  With `T = maxⱼ tr(Bⱼ)` for the curvature matrices of the current subproblem:
+  - `:epsilon`: stop if `σ‖p-x‖ ≤ ε`; accept `p` if `Fⱼ(p) ≤ Fⱼ(x) - αε²/(2σ)` for all `j`.
+  - `:trace_scaled`: stop if `σ‖p-x‖ < ε/(4(1+T))`; accept `p` if `Fⱼ(p) ≤ Fⱼ(x) - αε²/(32σ(1+T)²)` for all `j`.
 
 # Returns
 - `PDFPMOptions`: A public configuration object for the PDFPM solver.
 """
-function PDFPM_options(; verbose=1, max_iter=1000, opt_tol=1e-4, ftol=1e-4, max_time=3600.0, print_interval=1, stop_criteria=:pdfpm, store_trace=false, epsilon=1e-10, sigma=1.0, alpha=0.1, max_subproblem_iter=200, lambda_factor=0.1, lambda_min=1e-12)
-    return PDFPMOptions(verbose, max_iter, opt_tol, ftol, max_time, print_interval, stop_criteria, store_trace, epsilon, sigma, alpha, max_subproblem_iter, lambda_factor, lambda_min)
+function PDFPM_options(; verbose=1, max_iter=1000, opt_tol=1e-4, ftol=1e-4, max_time=3600.0, print_interval=1, stop_criteria=:pdfpm, store_trace=false, epsilon=1e-10, sigma=1.0, alpha=0.1, max_subproblem_iter=200, lambda_factor=0.1, lambda_min=1e-12, step_tolerance_rule=:epsilon)
+    return PDFPMOptions(verbose, max_iter, opt_tol, ftol, max_time, print_interval, stop_criteria, store_trace, epsilon, sigma, alpha, max_subproblem_iter, lambda_factor, lambda_min, step_tolerance_rule)
 end
 
 function _validate_pdfpm_options(options::PDFPMOptions)
@@ -139,6 +148,8 @@ function _validate_pdfpm_options(options::PDFPMOptions)
     options.max_subproblem_iter > 0 || throw(ArgumentError("`max_subproblem_iter` must be positive."))
     options.stop_criteria in (:pdfpm, :NormProgress) ||
         throw(ArgumentError("The stop criteria is not supported: $(options.stop_criteria)"))
+    options.step_tolerance_rule in (:epsilon, :trace_scaled) ||
+        throw(ArgumentError("The step tolerance rule is not supported: $(options.step_tolerance_rule)"))
     return options
 end
 
@@ -176,6 +187,7 @@ function _convert_pdfpm_options(::Type{T}, options::PDFPMOptions) where {T<:Abst
         options.max_subproblem_iter,
         lambda_factor,
         lambda_min,
+        options.step_tolerance_rule,
     )
 end
 
@@ -407,8 +419,10 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_i
         h_prev .= h
 
         for sub_iter in 1:options.max_subproblem_iter
+            # p was computed with the current B, which is fixed inside this loop
+            stop_step, decrease = _pdfpm_step_tolerances(options, sigma, B)
             # Check convergence
-            if sigma * norm(p - x) <= options.epsilon
+            if stop_step(sigma * norm(p - x))
                 x .= p
 
                 # Update result
@@ -435,7 +449,7 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_i
                 end
 
                 return _finalize_optimization!(result, options, total_start_time, :proximal_step_tolerance,
-                                               "PDFPM proximal step satisfies sigma*norm(p-x) <= epsilon")
+                                               _pdfpm_proximal_step_message(options))
             end
 
             # Check sufficient decrease
@@ -450,7 +464,7 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_i
 
             Fx .+= h
 
-            if all(isfinite, Fx) && all(Fx .<= result.Fval .- (options.alpha * options.epsilon^2) / (2 * sigma))
+            if all(isfinite, Fx) && all(Fx .<= result.Fval .- decrease)
                 # Update x
                 x .= p
                 break
@@ -566,4 +580,32 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_i
     # Only exhaustion reaches this epilogue; other causes return above.
     return _finalize_optimization!(result, options, total_start_time, :max_iter,
                                    "Maximum number of iterations reached $(options.max_iter)")
+end
+
+"""
+    _pdfpm_step_tolerances(options, sigma, B)
+
+Return the proximal-step stopping test and the sufficient-decrease amount of
+`options.step_tolerance_rule` for the regularization `sigma` and the curvature
+matrices `B` of the current subproblem.
+
+With `T = maxⱼ tr(Bⱼ)`, `:epsilon` stops on `σ‖p-x‖ ≤ ε` and requires
+`αε²/(2σ)`; `:trace_scaled` stops on `σ‖p-x‖ < ε/(4(1+T))` and requires
+`αε²/(32σ(1+T)²)`. A step norm equal to the threshold therefore stops under
+`:epsilon` and proceeds to the decrease test under `:trace_scaled`.
+"""
+function _pdfpm_step_tolerances(options::PDFPMParams{T}, sigma::T, B) where {T<:AbstractFloat}
+    if options.step_tolerance_rule === :epsilon
+        return (≤(options.epsilon)), (options.alpha * options.epsilon^2) / (2 * sigma)
+    end
+    trace_scale = 1 + maximum(tr, B)
+    return (<(options.epsilon / (4 * trace_scale))),
+           (options.alpha * options.epsilon^2) / (32 * sigma * trace_scale^2)
+end
+
+function _pdfpm_proximal_step_message(options::PDFPMParams)
+    if options.step_tolerance_rule === :epsilon
+        return "PDFPM proximal step satisfies sigma*norm(p-x) <= epsilon"
+    end
+    return "PDFPM proximal step satisfies sigma*norm(p-x) < epsilon/(4(1+max_j tr(B_j)))"
 end
