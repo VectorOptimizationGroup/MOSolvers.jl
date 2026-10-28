@@ -46,6 +46,8 @@ any values it needs to retain.
 
 With `store_trace=true`, the result contains `x_trace`, `Fval_trace`,
 `abs_theta_trace`, and `norm_progress_trace`. Stored arrays are copied.
+PDFPM also fills `sigma_trace` and `max_tr_B_trace`, aligned entry by entry
+with its other traces; CondG and ProxGrad leave them empty. See [PDFPM](@ref).
 The initial progress is `NaN`, since no previous iterate exists. ProxGrad records
 its initial `x` and `Fval` twice, while the initial measures are recorded once;
 these trace arrays should not be assumed to share an index at initialization.

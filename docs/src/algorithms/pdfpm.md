@@ -53,6 +53,22 @@ The default `stop_criteria=:pdfpm` also stops on `abs_theta <= opt_tol`.
 iteration. The initial point is checked using `abs_theta` alone.
 `max_subproblem_iter` limits this method's inner attempts, not Ipopt iterations.
 
+## Traces of σ and T
+
+With `store_trace=true`, entry ``k`` of `sigma_trace` and `max_tr_B_trace` belongs
+to entry ``k`` of `x_trace` and the other traces, under both step tolerance rules:
+
+| Entry | `sigma_trace` | `max_tr_B_trace` |
+| --- | --- | --- |
+| Initial point | `NaN` | `NaN` |
+| Accepted step | σ of the decrease test that accepted it | ``T`` of the subproblem that produced it |
+| Proximal-step exit | σ of the stopping test | ``T`` of the subproblem that produced the candidate |
+
+Here ``T=\max_j\operatorname{tr}(B_j)`` is taken before the BFGS update that follows
+an accepted step. No test precedes the initial point, so both values are `NaN`
+there. A run that stops on a rejected candidate or a failure records no new entry.
+Under `:epsilon`, ``T`` does not enter the tests but is recorded for comparison.
+
 ## Derivative inputs
 
 Providing `evalJf` uses the analytical evaluator. Omitting it uses central
