@@ -55,7 +55,7 @@ iteration. The initial point is checked using `abs_theta` alone.
 
 ## Traces of σ and T
 
-With `store_trace=true`, entry ``k`` of `sigma_trace` and `max_tr_B_trace` belongs
+With any `store_level` other than `:none`, entry ``k`` of `sigma_trace` and `max_tr_B_trace` belongs
 to entry ``k`` of `x_trace` and the other traces, under both step tolerance rules:
 
 | Entry | `sigma_trace` | `max_tr_B_trace` |

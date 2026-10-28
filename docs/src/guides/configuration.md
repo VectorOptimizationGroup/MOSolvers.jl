@@ -12,7 +12,7 @@ Each method has an options constructor: [`CondG_options`](@ref),
 | `max_time` | `3600.0` | Execution-time limit in seconds |
 | `verbose` | `1` | `0` suppresses solver progress and termination summaries |
 | `print_interval` | `1` | Number of iterations between progress rows |
-| `store_trace` | `false` | Store copies of the reported iterates and measures |
+| `store_level` | `:none` | Traces kept in the result: `:none`, `:low`, `:medium`, or `:high` |
 
 ProxGrad adds `mu`. PDFPM adds `sigma`, `epsilon`, `alpha`,
 `max_subproblem_iter`, `lambda_factor`, `lambda_min`, and `step_tolerance_rule`;
@@ -44,10 +44,25 @@ any values it needs to retain.
 
 ## Traces
 
-With `store_trace=true`, the result contains `x_trace`, `Fval_trace`,
-`abs_theta_trace`, and `norm_progress_trace`. Stored arrays are copied.
-PDFPM also fills `sigma_trace` and `max_tr_B_trace`, aligned entry by entry
+`store_level` selects the traces filled in the result. Stored arrays are copied,
+and the level does not change iterates, evaluations, or termination.
+
+| Level | Traces filled |
+| --- | --- |
+| `:none` | None |
+| `:low` | `Fval_trace`, `abs_theta_trace`, `norm_progress_trace`; PDFPM also `sigma_trace` and `max_tr_B_trace` |
+| `:medium` | `:low` plus `x_trace` |
+| `:high` | Same as `:medium`; reserved for heavier traces |
+
+`:low` costs one objective vector of length ``m`` and a few scalars per recorded
+point; `:medium` adds one point of length ``n``.
+PDFPM's `sigma_trace` and `max_tr_B_trace` are aligned entry by entry
 with its other traces; CondG and ProxGrad leave them empty. See [PDFPM](@ref).
+
+!!! compat "Breaking change"
+    `store_level` replaces the former Boolean option `store_trace`, which was
+    removed without deprecation. Use `store_level=:medium` for `store_trace=true`
+    and `store_level=:none` for `store_trace=false`.
 The initial progress is `NaN`, since no previous iterate exists. ProxGrad records
 its initial `x` and `Fval` twice, while the initial measures are recorded once;
 these trace arrays should not be assumed to share an index at initialization.
