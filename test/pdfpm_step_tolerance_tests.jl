@@ -150,7 +150,7 @@ end
     for jac in ((; evalJf), (;)), kw in ((;), (; epsilon=1e-2, alpha=0.5))
         runs = map(((;), (; step_tolerance_rule=:epsilon))) do rule
             options = PDFPM_options(; verbose=0, max_iter=50, opt_tol=1e-6,
-                                    store_trace=true, kw..., rule...)
+                                    store_level=:medium, kw..., rule...)
             PDFPM(evalf, A, 0.0, [-140.0, 6850.0], options; jac...,
                   lb=fill(-500.0, 2), ub=fill(10000.0, 2))
         end

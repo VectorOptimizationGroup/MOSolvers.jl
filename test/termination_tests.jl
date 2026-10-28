@@ -11,7 +11,7 @@ function termination_case(method; verbose=0, max_iter=1, converge_at=typemax(Int
                           p_values=Dict{Int,Float64}(), initial_value=nothing,
                           bad_jacobian=false, max_subproblem_iter=200,
                           epsilon=1e-10, analytic=true,
-                          store_trace=false, trial_value=nothing,
+                          store_level=:none, trial_value=nothing,
                           throw_initial=false, throw_subproblem=false, throw_callback=false)
     result = MOSolvers.OptimResult([2.0], [0.0])
     calls = Ref(0)
@@ -51,7 +51,7 @@ function termination_case(method; verbose=0, max_iter=1, converge_at=typemax(Int
     end
     criterion = norm_progress ? :NormProgress : method
     kwargs = (; verbose, max_iter, max_time, opt_tol=1e-8, ftol,
-              stop_criteria=criterion, store_trace)
+              stop_criteria=criterion, store_level)
     if method == :condg
         options = MOSolvers._convert_condg_options(Float64, CondG_options(; kwargs...))
         MOSolvers._CondG_optimize!(result, f!, Jf!, h!, 1, subproblem, options, callback; linesearch)
@@ -264,7 +264,7 @@ end
     for verbose in (0, 1)
         # The proximal criterion is separate from the uncomputed model measure at p.
         p = 2.0 + 1e-12
-        result, callbacks = termination_case(:pdfpm; verbose, p_values=Dict(1 => p), store_trace=true)
+        result, callbacks = termination_case(:pdfpm; verbose, p_values=Dict(1 => p), store_level=:medium)
         @test result.status === :proximal_step_tolerance
         @test converged(result) && isempty(callbacks)
         @test result.iter == 1 && result.x == [p]

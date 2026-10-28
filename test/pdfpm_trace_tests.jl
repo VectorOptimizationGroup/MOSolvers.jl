@@ -9,7 +9,7 @@ using Test
 # otherwise, and B0 = 3. Call c of the subproblem returns `p_values[c]` with
 # θ = -1, or x with θ = 0 (optimality) when c is not a key.
 function trace_case(rule; p_values, trial_F=Dict{Float64,Float64}(),
-                    max_subproblem_iter=200, store_trace=true)
+                    max_subproblem_iter=200, store_level=:medium)
     result = MOSolvers.OptimResult([2.0], [0.0])
     f!(F, x) = (F[1] = get(trial_F, x[1], x[1]^2 / 2); F)
     Jf!(J, x; lambda=nothing) = (J[1, 1] = x[1]; J)
@@ -22,7 +22,7 @@ function trace_case(rule; p_values, trial_F=Dict{Float64,Float64}(),
     end
     options = MOSolvers._convert_pdfpm_options(Float64,
         PDFPM_options(; verbose=0, epsilon=1.0, alpha=0.5, sigma=1.0, opt_tol=1e-8,
-                      max_subproblem_iter, store_trace, step_tolerance_rule=rule))
+                      max_subproblem_iter, store_level, step_tolerance_rule=rule))
     MOSolvers._PDFPM_optimize!(result, f!, Jf!, true, h!, 1, subproblem, options,
                                (iter, result) -> false; initial_B=[fill(3.0, 1, 1)])
     return result, Bs
@@ -62,7 +62,7 @@ trace_lengths(r) = map(length, (r.x_trace, r.Fval_trace, r.abs_theta_trace,
         @test isequal(result.sigma_trace, [NaN]) && isequal(result.max_tr_B_trace, [NaN])
 
         result, _ = trace_case(rule; p_values=Dict(1 => 0.5, 2 => 1.0), trial_F=Dict(0.5 => 2.0),
-                               store_trace=false)
+                               store_level=:none)
         @test trace_lengths(result) == ntuple(_ -> 0, 6)
     end
 end
@@ -74,8 +74,8 @@ end
     bounds = (; lb=fill(-500.0, 2), ub=fill(10000.0, 2))
     fields = (:x, :Fval, :iter, :abs_theta, :norm_progress, :n_f_evals, :n_Jf_evals, :status, :message)
     for rule in (:epsilon, :trace_scaled), jac in ((; evalJf), (;))
-        runs = map((true, false)) do store_trace
-            options = PDFPM_options(; verbose=0, max_iter=50, opt_tol=1e-6, store_trace,
+        runs = map((:medium, :none)) do store_level
+            options = PDFPM_options(; verbose=0, max_iter=50, opt_tol=1e-6, store_level,
                                     step_tolerance_rule=rule)
             PDFPM(evalf, A, 0.0, [-140.0, 6850.0], options; jac..., bounds...)
         end
@@ -101,7 +101,7 @@ end
     bounds = (; lb=fill(-500.0, 2), ub=fill(10000.0, 2))
     for (solver, opts) in ((CondG, CondG_options), (ProxGrad, ProxGrad_options))
         result = solver(evalf, evalJf, A, 0.0, [-140.0, 6850.0],
-                        opts(verbose=0, max_iter=5, store_trace=true); bounds...)
+                        opts(verbose=0, max_iter=5, store_level=:medium); bounds...)
         @test !isempty(result.x_trace) && !isempty(result.abs_theta_trace)
         @test isempty(result.sigma_trace) && isempty(result.max_tr_B_trace)
     end
