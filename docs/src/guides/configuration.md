@@ -58,11 +58,11 @@ and the level does not change iterates, evaluations, or termination.
 point; `:medium` adds one point of length ``n``.
 PDFPM's `sigma_trace` and `max_tr_B_trace` are aligned entry by entry
 with its other traces; CondG and ProxGrad leave them empty. See [PDFPM](@ref).
+The initial progress is `NaN`, since no previous iterate exists. ProxGrad records
+its initial `x` and `Fval` twice, while the initial measures are recorded once;
+these trace arrays should not be assumed to share an index at initialization.
 
 !!! compat "Breaking change"
     `store_level` replaces the former Boolean option `store_trace`, which was
     removed without deprecation. Use `store_level=:medium` for `store_trace=true`
     and `store_level=:none` for `store_trace=false`.
-The initial progress is `NaN`, since no previous iterate exists. ProxGrad records
-its initial `x` and `Fval` twice, while the initial measures are recorded once;
-these trace arrays should not be assumed to share an index at initialization.
