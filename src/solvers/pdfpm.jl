@@ -122,7 +122,8 @@ internally as a `Float64`.
 - `max_time::Real = 3600.0`: Maximum time in seconds.
 - `print_interval::Integer = 1`: Print interval.
 - `stop_criteria::Symbol = :pdfpm`: Additional stopping criteria (`:pdfpm` or `:NormProgress`).
-- `store_trace::Bool = false`: Whether to store the trace of `x` during optimization.
+- `store_trace::Bool = false`: Whether to store the trace of `x` during optimization. Also
+  records the σ and `maxⱼ tr(Bⱼ)` of the tests behind each point (`sigma_trace`, `max_tr_B_trace`).
 - `epsilon::Real = 1e-10`: Tolerance parameter ε.
 - `sigma::Real = 1.0`: Regularization parameter σ.
 - `alpha::Real = 0.1`: Parameter α for sufficient decrease.
@@ -395,8 +396,9 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_i
                                        "The subproblem of PDFPM returned nonfinite theta or p (theta=$theta)")
     end
 
-    # Update result
-    update!(result, x=x, abs_theta=abs(theta), Fval=Fx + h, norm_progress=T(NaN), store_trace=options.store_trace)
+    # Update result; no step has been tested yet, so sigma and max_j tr(B_j) are NaN
+    update!(result, x=x, abs_theta=abs(theta), Fval=Fx + h, norm_progress=T(NaN),
+            sigma=T(NaN), max_tr_B=T(NaN), store_trace=options.store_trace)
     result.F_init .= result.Fval
 
     if options.verbose > 0
@@ -443,7 +445,8 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_i
                                                    "Nonfinite objective at the proximal-step stopping point")
                 end
                 # The model measure was computed at the preceding point, not at p.
-                update!(result, x=x, Fval=Fx, abs_theta=T(NaN), norm_progress=norm_progress, iter=iter, store_trace=options.store_trace)
+                update!(result, x=x, Fval=Fx, abs_theta=T(NaN), norm_progress=norm_progress, iter=iter,
+                        sigma=sigma, max_tr_B=_pdfpm_traced_max_tr(options, B), store_trace=options.store_trace)
                 if options.verbose > 0
                     if iter == 0 || (iter % options.print_interval == 0)
                         print_table(result)
@@ -534,6 +537,9 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_i
                                            "Nonfinite Jacobian after the accepted step")
         end
 
+        # max_j tr(B_j) of the subproblem that produced the accepted step, before the update
+        step_max_tr_B = _pdfpm_traced_max_tr(options, B)
+
         # Update B matrices using BFGS
         theta_bfgs = isfinite(theta) ? theta : one(T)  # ensures eps ≈ 1e-6 inside bfgsupdate!
         bfgsupdate!(B, x, result.x, JF, JF_prev, theta_bfgs) # TODO: Check here if the B matrices is ill-conditioned
@@ -550,7 +556,8 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_i
             return _finalize_optimization!(result, options, total_start_time, :numerical_failure,
                                            "The subproblem of PDFPM returned nonfinite theta or p (theta=$theta)")
         end
-        update!(result, x=x, Fval=Fx, abs_theta=abs(theta), norm_progress=norm_progress, iter=iter, store_trace=options.store_trace)
+        update!(result, x=x, Fval=Fx, abs_theta=abs(theta), norm_progress=norm_progress, iter=iter,
+                sigma=sigma, max_tr_B=step_max_tr_B, store_trace=options.store_trace)
 
         if options.verbose > 0
             if result.iter == 0 || (result.iter % options.print_interval == 0)
@@ -604,6 +611,9 @@ function _pdfpm_step_tolerances(options::PDFPMParams{T}, sigma::T, B) where {T<:
     return (<(options.epsilon / (4 * trace_scale))),
            (options.alpha * options.epsilon^2) / (32 * sigma * trace_scale^2)
 end
+
+# maxⱼ tr(Bⱼ) for the trace, computed only when it is recorded.
+_pdfpm_traced_max_tr(options::PDFPMParams, B) = options.store_trace ? maximum(tr, B) : nothing
 
 function _pdfpm_proximal_step_message(options::PDFPMParams)
     if options.step_tolerance_rule === :epsilon

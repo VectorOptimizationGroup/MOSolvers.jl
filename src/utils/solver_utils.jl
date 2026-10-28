@@ -20,6 +20,12 @@ Container structure holding the results produced by an optimization solver.
 - `Fval_trace::Vector{Vector{T}}`: History of `Fval` values when tracing is enabled.
 - `abs_theta_trace::Vector{T}`: History of `abs_theta` values when tracing is enabled.
 - `norm_progress_trace::Vector{T}`: History of `norm_progress` values when tracing is enabled.
+- `sigma_trace::Vector{T}`: PDFPM only, when tracing is enabled: per recorded point, the
+  regularization σ of the tests that produced it; `NaN` at the initial point. Empty for
+  CondG and ProxGrad.
+- `max_tr_B_trace::Vector{T}`: PDFPM only, when tracing is enabled: per recorded point,
+  `maxⱼ tr(Bⱼ)` of the curvature matrices of the subproblem that produced it; `NaN` at the
+  initial point. Empty for CondG and ProxGrad.
 - `status::Symbol`: Termination cause; see [`converged`](@ref).
 - `message::String`: Human-readable termination or error message.
 """
@@ -39,6 +45,8 @@ mutable struct OptimResult{T<:AbstractFloat}
     Fval_trace::Vector{Vector{T}}
     abs_theta_trace::Vector{T}
     norm_progress_trace::Vector{T}
+    sigma_trace::Vector{T}
+    max_tr_B_trace::Vector{T}
     status::Symbol
     message::String
 end
@@ -65,6 +73,8 @@ function OptimResult(x0::AbstractVector{T}, Fval::AbstractVector{T}) where {T<:A
         Vector{Vector{T}}(),    # Fval_trace
         T[],                    # abs_theta_trace
         T[],                    # norm_progress_trace
+        T[],                    # sigma_trace
+        T[],                    # max_tr_B_trace
         :not_started,           # status
         "Optimization not started")  # message
 end
@@ -80,9 +90,11 @@ Update the `OptimResult` fields in-place.
 - `abs_theta`: New optimality measure.
 - `norm_progress`: New progress measure.
 - `iter`: New iteration count.
+- `sigma`, `max_tr_B`: PDFPM's σ and `maxⱼ tr(Bⱼ)` for the recorded point; they have no
+  scalar field and are only appended to `sigma_trace` and `max_tr_B_trace`.
 - `store_trace`: If `true`, appends `x`, `Fval`, `abs_theta`, etc. to trace history.
 """
-function update!(result::OptimResult{T}; x=nothing, Fval=nothing, abs_theta=nothing, norm_progress=nothing, iter=nothing, store_trace=false) where {T<:AbstractFloat}
+function update!(result::OptimResult{T}; x=nothing, Fval=nothing, abs_theta=nothing, norm_progress=nothing, iter=nothing, sigma=nothing, max_tr_B=nothing, store_trace=false) where {T<:AbstractFloat}
     if x !== nothing
         result.x .= x
         if store_trace
@@ -109,6 +121,11 @@ function update!(result::OptimResult{T}; x=nothing, Fval=nothing, abs_theta=noth
         if store_trace
             push!(result.norm_progress_trace, norm_progress)
         end
+    end
+
+    if store_trace
+        sigma !== nothing && push!(result.sigma_trace, sigma)
+        max_tr_B !== nothing && push!(result.max_tr_B_trace, max_tr_B)
     end
 
     if iter !== nothing
