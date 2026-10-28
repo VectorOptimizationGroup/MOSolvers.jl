@@ -16,7 +16,7 @@ Base.@kwdef struct CondGOptions
     max_time::Real = 3600.0
     print_interval::Int = 1
     stop_criteria::Symbol = :condg
-    store_trace::Bool = false
+    store_level::Symbol = :none
 
     function CondGOptions(
         verbose,
@@ -26,7 +26,7 @@ Base.@kwdef struct CondGOptions
         max_time,
         print_interval,
         stop_criteria,
-        store_trace,
+        store_level,
     )
         options = new(
             Int(verbose),
@@ -36,7 +36,7 @@ Base.@kwdef struct CondGOptions
             max_time,
             Int(print_interval),
             stop_criteria,
-            Bool(store_trace),
+            store_level,
         )
         return _validate_condg_options(options)
     end
@@ -55,7 +55,7 @@ Parameters for the Conditional Gradient (CondG) solver.
 - `max_time::Float64`: Maximum execution time in seconds.
 - `print_interval::Int`: Interval for printing progress (in iterations).
 - `stop_criteria::Symbol`: Additional stopping criteria (`:condg` or `:NormProgress`).
-- `store_trace::Bool`: Whether to store the trace of iterates `x` during optimization.
+- `store_level::Symbol`: Traces kept in the result (`:none`, `:low`, `:medium` or `:high`).
 """
 struct CondGParams{T<:AbstractFloat}
     verbose::Int # Verbose level
@@ -65,7 +65,7 @@ struct CondGParams{T<:AbstractFloat}
     max_time::Float64 # Maximum time in seconds
     print_interval::Int # Print interval
     stop_criteria::Symbol # Additional stop criteria
-    store_trace::Bool # Store trace
+    store_level::Symbol # Trace level
 end
 
 
@@ -86,13 +86,15 @@ solver boundary. `max_time` is measured in seconds and stored internally as a
 - `max_time::Real = 3600.0`: Maximum time in seconds.
 - `print_interval::Integer = 1`: Print interval.
 - `stop_criteria::Symbol = :condg`: Additional stopping criteria (`:condg` or `:NormProgress`).
-- `store_trace::Bool = false`: Whether to store the trace of `x` during optimization.
+- `store_level::Symbol = :none`: Traces kept in the result. `:none` keeps none; `:low` keeps
+  `Fval_trace`, `abs_theta_trace` and `norm_progress_trace`; `:medium` adds
+  `x_trace`; `:high` is currently the same as `:medium`.
 
 # Returns
 - `CondGOptions`: A public configuration object for the CondG solver.
 """
-function CondG_options(; verbose=1, max_iter=1000, opt_tol=1e-4, ftol=1e-4, max_time=3600.0, print_interval=1, stop_criteria=:condg, store_trace=false)
-    return CondGOptions(verbose, max_iter, opt_tol, ftol, max_time, print_interval, stop_criteria, store_trace)
+function CondG_options(; verbose=1, max_iter=1000, opt_tol=1e-4, ftol=1e-4, max_time=3600.0, print_interval=1, stop_criteria=:condg, store_level=:none)
+    return CondGOptions(verbose, max_iter, opt_tol, ftol, max_time, print_interval, stop_criteria, store_level)
 end
 
 function _validate_condg_options(options::CondGOptions)
@@ -101,6 +103,8 @@ function _validate_condg_options(options::CondGOptions)
     options.print_interval > 0 || throw(ArgumentError("`print_interval` must be positive."))
     options.stop_criteria in (:condg, :NormProgress) ||
         throw(ArgumentError("The stop criteria is not supported: $(options.stop_criteria)"))
+    options.store_level in STORE_LEVELS ||
+        throw(ArgumentError("The store level is not supported: $(options.store_level)"))
     return options
 end
 
@@ -119,7 +123,7 @@ function _convert_condg_options(::Type{T}, options::CondGOptions) where {T<:Abst
         Float64(options.max_time),
         options.print_interval,
         options.stop_criteria,
-        options.store_trace,
+        options.store_level,
     )
 end
 
@@ -317,7 +321,7 @@ function _CondG_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::
                                        "The subproblem of CondG returned nonfinite theta or p (theta=$theta)")
     end
 
-    update!(result, x=x, abs_theta=abs(theta), Fval=Fx + h, norm_progress=T(NaN), store_trace=options.store_trace)
+    update!(result, x=x, abs_theta=abs(theta), Fval=Fx + h, norm_progress=T(NaN), store_level=options.store_level)
     result.F_init .= result.Fval
 
     if options.verbose > 0
@@ -398,7 +402,7 @@ function _CondG_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::
         end
 
         # Update
-        update!(result, x=x, Fval=F_trial, abs_theta=abs(theta), norm_progress=norm_progress, iter=iter, store_trace=options.store_trace)
+        update!(result, x=x, Fval=F_trial, abs_theta=abs(theta), norm_progress=norm_progress, iter=iter, store_level=options.store_level)
 
         if options.verbose > 0
             if result.iter == 0 || (result.iter % options.print_interval == 0)

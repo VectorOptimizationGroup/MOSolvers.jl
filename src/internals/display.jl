@@ -116,15 +116,6 @@ function _print_box_section(title::String, params::Vector{Pair{String,String}}, 
     _print_box_pairs(params, width)
 end
 
-"""
-    _format_bool(value::Bool)
-
-Format booleans with lowercase strings for stable header output.
-"""
-function _format_bool(value::Bool)
-    return value ? "true" : "false"
-end
-
 # Metadata extraction helpers. Each method returns ordered `Pair{String,String}`
 # values and leaves all box rendering to the functions above.
 
@@ -155,7 +146,7 @@ _solver_header_pairs(options) = Pair{String,String}[]
 function _solver_header_pairs(options::CondGParams)
     return Pair{String,String}[
         "Stop Criteria" => string(options.stop_criteria),
-        "Store Trace" => _format_bool(options.store_trace),
+        "Store Level" => string(options.store_level),
     ]
 end
 
@@ -163,7 +154,7 @@ function _solver_header_pairs(options::PDFPMParams)
     lambda_factor_str = options.lambda_factor isa Function ? "Function" : @sprintf("%.2e", options.lambda_factor)
     return Pair{String,String}[
         "Stop Criteria" => string(options.stop_criteria),
-        "Store Trace" => _format_bool(options.store_trace),
+        "Store Level" => string(options.store_level),
         "Epsilon (ϵ)" => @sprintf("%.2e", options.epsilon),
         "Sigma (σ)" => @sprintf("%.2e", options.sigma),
         "Alpha (α)" => @sprintf("%.2e", options.alpha),
@@ -177,7 +168,7 @@ end
 function _solver_header_pairs(options::ProxGradParams)
     return Pair{String,String}[
         "Stop Criteria" => string(options.stop_criteria),
-        "Store Trace" => _format_bool(options.store_trace),
+        "Store Level" => string(options.store_level),
         "mu (μ)" => @sprintf("%.2e", options.mu),
     ]
 end

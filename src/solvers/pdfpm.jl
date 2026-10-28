@@ -17,7 +17,7 @@ Base.@kwdef struct PDFPMOptions
     max_time::Real = 3600.0
     print_interval::Int = 1
     stop_criteria::Symbol = :pdfpm
-    store_trace::Bool = false
+    store_level::Symbol = :none
     epsilon::Real = 1e-10
     sigma::Real = 1.0
     alpha::Real = 0.1
@@ -34,7 +34,7 @@ Base.@kwdef struct PDFPMOptions
         max_time,
         print_interval,
         stop_criteria,
-        store_trace,
+        store_level,
         epsilon,
         sigma,
         alpha,
@@ -51,7 +51,7 @@ Base.@kwdef struct PDFPMOptions
             max_time,
             Int(print_interval),
             stop_criteria,
-            Bool(store_trace),
+            store_level,
             epsilon,
             sigma,
             alpha,
@@ -77,7 +77,7 @@ Parameters for the Partially Derivative-Free Proximal Method (PDFPM) solver.
 - `max_time::Float64`: Maximum execution time in seconds.
 - `print_interval::Int`: Interval for printing progress (in iterations).
 - `stop_criteria::Symbol`: Additional stopping criteria (`:pdfpm` or `:NormProgress`).
-- `store_trace::Bool`: Whether to store the trace of iterates `x` during optimization.
+- `store_level::Symbol`: Traces kept in the result (`:none`, `:low`, `:medium` or `:high`).
 - `epsilon::T`: Tolerance parameter ε for the subproblem.
 - `sigma::T`: Regularization parameter σ.
 - `alpha::T`: Parameter α for sufficient decrease condition.
@@ -94,7 +94,7 @@ struct PDFPMParams{T<:AbstractFloat}
     max_time::Float64 # Maximum time in seconds
     print_interval::Int # Print interval
     stop_criteria::Symbol # Additional stop criteria
-    store_trace::Bool # Store trace
+    store_level::Symbol # Trace level
     epsilon::T # Epsilon parameter for finite differences
     sigma::T # Sigma parameter for regularization
     alpha::T # Alpha parameter for sufficient decrease
@@ -122,8 +122,10 @@ internally as a `Float64`.
 - `max_time::Real = 3600.0`: Maximum time in seconds.
 - `print_interval::Integer = 1`: Print interval.
 - `stop_criteria::Symbol = :pdfpm`: Additional stopping criteria (`:pdfpm` or `:NormProgress`).
-- `store_trace::Bool = false`: Whether to store the trace of `x` during optimization. Also
-  records the σ and `maxⱼ tr(Bⱼ)` of the tests behind each point (`sigma_trace`, `max_tr_B_trace`).
+- `store_level::Symbol = :none`: Traces kept in the result. `:none` keeps none; `:low` keeps
+  `Fval_trace`, `abs_theta_trace`, `norm_progress_trace`, and the σ and `maxⱼ tr(Bⱼ)` of the
+  tests behind each point (`sigma_trace`, `max_tr_B_trace`); `:medium` adds `x_trace`;
+  `:high` is currently the same as `:medium`.
 - `epsilon::Real = 1e-10`: Tolerance parameter ε.
 - `sigma::Real = 1.0`: Regularization parameter σ.
 - `alpha::Real = 0.1`: Parameter α for sufficient decrease.
@@ -138,8 +140,8 @@ internally as a `Float64`.
 # Returns
 - `PDFPMOptions`: A public configuration object for the PDFPM solver.
 """
-function PDFPM_options(; verbose=1, max_iter=1000, opt_tol=1e-4, ftol=1e-4, max_time=3600.0, print_interval=1, stop_criteria=:pdfpm, store_trace=false, epsilon=1e-10, sigma=1.0, alpha=0.1, max_subproblem_iter=200, lambda_factor=0.1, lambda_min=1e-12, step_tolerance_rule=:epsilon)
-    return PDFPMOptions(verbose, max_iter, opt_tol, ftol, max_time, print_interval, stop_criteria, store_trace, epsilon, sigma, alpha, max_subproblem_iter, lambda_factor, lambda_min, step_tolerance_rule)
+function PDFPM_options(; verbose=1, max_iter=1000, opt_tol=1e-4, ftol=1e-4, max_time=3600.0, print_interval=1, stop_criteria=:pdfpm, store_level=:none, epsilon=1e-10, sigma=1.0, alpha=0.1, max_subproblem_iter=200, lambda_factor=0.1, lambda_min=1e-12, step_tolerance_rule=:epsilon)
+    return PDFPMOptions(verbose, max_iter, opt_tol, ftol, max_time, print_interval, stop_criteria, store_level, epsilon, sigma, alpha, max_subproblem_iter, lambda_factor, lambda_min, step_tolerance_rule)
 end
 
 function _validate_pdfpm_options(options::PDFPMOptions)
@@ -149,6 +151,8 @@ function _validate_pdfpm_options(options::PDFPMOptions)
     options.max_subproblem_iter > 0 || throw(ArgumentError("`max_subproblem_iter` must be positive."))
     options.stop_criteria in (:pdfpm, :NormProgress) ||
         throw(ArgumentError("The stop criteria is not supported: $(options.stop_criteria)"))
+    options.store_level in STORE_LEVELS ||
+        throw(ArgumentError("The store level is not supported: $(options.store_level)"))
     options.step_tolerance_rule in (:epsilon, :trace_scaled) ||
         throw(ArgumentError("The step tolerance rule is not supported: $(options.step_tolerance_rule)"))
     return options
@@ -181,7 +185,7 @@ function _convert_pdfpm_options(::Type{T}, options::PDFPMOptions) where {T<:Abst
         Float64(options.max_time),
         options.print_interval,
         options.stop_criteria,
-        options.store_trace,
+        options.store_level,
         epsilon,
         sigma,
         alpha,
@@ -398,7 +402,7 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_i
 
     # Update result; no step has been tested yet, so sigma and max_j tr(B_j) are NaN
     update!(result, x=x, abs_theta=abs(theta), Fval=Fx + h, norm_progress=T(NaN),
-            sigma=T(NaN), max_tr_B=T(NaN), store_trace=options.store_trace)
+            sigma=T(NaN), max_tr_B=T(NaN), store_level=options.store_level)
     result.F_init .= result.Fval
 
     if options.verbose > 0
@@ -446,7 +450,7 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_i
                 end
                 # The model measure was computed at the preceding point, not at p.
                 update!(result, x=x, Fval=Fx, abs_theta=T(NaN), norm_progress=norm_progress, iter=iter,
-                        sigma=sigma, max_tr_B=_pdfpm_traced_max_tr(options, B), store_trace=options.store_trace)
+                        sigma=sigma, max_tr_B=_pdfpm_traced_max_tr(options, B), store_level=options.store_level)
                 if options.verbose > 0
                     if iter == 0 || (iter % options.print_interval == 0)
                         print_table(result)
@@ -557,7 +561,7 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_i
                                            "The subproblem of PDFPM returned nonfinite theta or p (theta=$theta)")
         end
         update!(result, x=x, Fval=Fx, abs_theta=abs(theta), norm_progress=norm_progress, iter=iter,
-                sigma=sigma, max_tr_B=step_max_tr_B, store_trace=options.store_trace)
+                sigma=sigma, max_tr_B=step_max_tr_B, store_level=options.store_level)
 
         if options.verbose > 0
             if result.iter == 0 || (result.iter % options.print_interval == 0)
@@ -613,7 +617,7 @@ function _pdfpm_step_tolerances(options::PDFPMParams{T}, sigma::T, B) where {T<:
 end
 
 # maxⱼ tr(Bⱼ) for the trace, computed only when it is recorded.
-_pdfpm_traced_max_tr(options::PDFPMParams, B) = options.store_trace ? maximum(tr, B) : nothing
+_pdfpm_traced_max_tr(options::PDFPMParams, B) = options.store_level === :none ? nothing : maximum(tr, B)
 
 function _pdfpm_proximal_step_message(options::PDFPMParams)
     if options.step_tolerance_rule === :epsilon

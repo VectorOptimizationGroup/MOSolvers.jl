@@ -1,3 +1,6 @@
+# Values of the `store_level` option, from no trace to the most detailed one.
+const STORE_LEVELS = (:none, :low, :medium, :high)
+
 """
     mutable struct OptimResult{T<:AbstractFloat}
 
@@ -16,14 +19,14 @@ Container structure holding the results produced by an optimization solver.
 - `n_Jf_evals::Int`: Number of Jacobian evaluations (`Jf!`).
 - `total_time::Float64`: Total wall-clock time spent by the solver (seconds).
 - `subproblem_time::Float64`: Cumulative time spent solving sub-problems (seconds).
-- `x_trace::Vector{Vector{T}}`: History of iterates (populated when `store_trace=true`).
-- `Fval_trace::Vector{Vector{T}}`: History of `Fval` values when tracing is enabled.
-- `abs_theta_trace::Vector{T}`: History of `abs_theta` values when tracing is enabled.
-- `norm_progress_trace::Vector{T}`: History of `norm_progress` values when tracing is enabled.
-- `sigma_trace::Vector{T}`: PDFPM only, when tracing is enabled: per recorded point, the
+- `x_trace::Vector{Vector{T}}`: History of iterates (`store_level` `:medium` or `:high`).
+- `Fval_trace::Vector{Vector{T}}`: History of `Fval` values (`store_level` other than `:none`).
+- `abs_theta_trace::Vector{T}`: History of `abs_theta` values (`store_level` other than `:none`).
+- `norm_progress_trace::Vector{T}`: History of `norm_progress` values (`store_level` other than `:none`).
+- `sigma_trace::Vector{T}`: PDFPM only, `store_level` other than `:none`: per recorded point, the
   regularization σ of the tests that produced it; `NaN` at the initial point. Empty for
   CondG and ProxGrad.
-- `max_tr_B_trace::Vector{T}`: PDFPM only, when tracing is enabled: per recorded point,
+- `max_tr_B_trace::Vector{T}`: PDFPM only, `store_level` other than `:none`: per recorded point,
   `maxⱼ tr(Bⱼ)` of the curvature matrices of the subproblem that produced it; `NaN` at the
   initial point. Empty for CondG and ProxGrad.
 - `status::Symbol`: Termination cause; see [`converged`](@ref).
@@ -92,38 +95,43 @@ Update the `OptimResult` fields in-place.
 - `iter`: New iteration count.
 - `sigma`, `max_tr_B`: PDFPM's σ and `maxⱼ tr(Bⱼ)` for the recorded point; they have no
   scalar field and are only appended to `sigma_trace` and `max_tr_B_trace`.
-- `store_trace`: If `true`, appends `x`, `Fval`, `abs_theta`, etc. to trace history.
+- `store_level`: Trace level, one of `STORE_LEVELS`. Any level but `:none` appends `Fval`,
+  `abs_theta`, `norm_progress`, `sigma` and `max_tr_B` to their traces; `:medium` and `:high`
+  also append `x`.
 """
-function update!(result::OptimResult{T}; x=nothing, Fval=nothing, abs_theta=nothing, norm_progress=nothing, iter=nothing, sigma=nothing, max_tr_B=nothing, store_trace=false) where {T<:AbstractFloat}
+function update!(result::OptimResult{T}; x=nothing, Fval=nothing, abs_theta=nothing, norm_progress=nothing, iter=nothing, sigma=nothing, max_tr_B=nothing, store_level=:none) where {T<:AbstractFloat}
+    store_low = store_level !== :none
+    store_x = store_level === :medium || store_level === :high
+
     if x !== nothing
         result.x .= x
-        if store_trace
+        if store_x
             push!(result.x_trace, copy(result.x))
         end
     end
 
     if Fval !== nothing
         result.Fval .= Fval
-        if store_trace
+        if store_low
             push!(result.Fval_trace, copy(result.Fval))
         end
     end
 
     if abs_theta !== nothing
         result.abs_theta = abs_theta
-        if store_trace
+        if store_low
             push!(result.abs_theta_trace, abs_theta)
         end
     end
 
     if norm_progress !== nothing
         result.norm_progress = norm_progress
-        if store_trace
+        if store_low
             push!(result.norm_progress_trace, norm_progress)
         end
     end
 
-    if store_trace
+    if store_low
         sigma !== nothing && push!(result.sigma_trace, sigma)
         max_tr_B !== nothing && push!(result.max_tr_B_trace, max_tr_B)
     end

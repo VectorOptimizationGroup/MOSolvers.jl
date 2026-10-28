@@ -16,7 +16,7 @@ Base.@kwdef struct ProxGradOptions
     max_time::Real = 3600.0
     print_interval::Int = 1
     stop_criteria::Symbol = :proxgrad
-    store_trace::Bool = false
+    store_level::Symbol = :none
     mu::Real = 1.0
 
     function ProxGradOptions(
@@ -27,7 +27,7 @@ Base.@kwdef struct ProxGradOptions
         max_time,
         print_interval,
         stop_criteria,
-        store_trace,
+        store_level,
         mu,
     )
         options = new(
@@ -38,7 +38,7 @@ Base.@kwdef struct ProxGradOptions
             max_time,
             Int(print_interval),
             stop_criteria,
-            Bool(store_trace),
+            store_level,
             mu,
         )
         return _validate_proxgrad_options(options)
@@ -58,7 +58,7 @@ Parameters for the Proximal Gradient solver.
 - `max_time::Float64`: Maximum execution time in seconds.
 - `print_interval::Int`: Interval for printing progress (in iterations).
 - `stop_criteria::Symbol`: Additional stopping criteria (`:proxgrad` or `:NormProgress`).
-- `store_trace::Bool`: Whether to store the trace of iterates `x` during optimization.
+- `store_level::Symbol`: Traces kept in the result (`:none`, `:low`, `:medium` or `:high`).
 - `mu::T`: Proximal parameter μ.
 """
 struct ProxGradParams{T<:AbstractFloat}
@@ -69,7 +69,7 @@ struct ProxGradParams{T<:AbstractFloat}
     max_time::Float64 # Maximum time in seconds
     print_interval::Int # Print interval
     stop_criteria::Symbol # Additional stop criteria
-    store_trace::Bool # Store trace
+    store_level::Symbol # Trace level
     mu::T # Proximal parameter
 end
 
@@ -91,14 +91,16 @@ internally as a `Float64`.
 - `max_time::Real = 3600.0`: Maximum time in seconds.
 - `print_interval::Integer = 1`: Print interval.
 - `stop_criteria::Symbol = :proxgrad`: Additional stopping criteria (`:proxgrad` or `:NormProgress`).
-- `store_trace::Bool = false`: Whether to store the trace of `x` during optimization.
+- `store_level::Symbol = :none`: Traces kept in the result. `:none` keeps none; `:low` keeps
+  `Fval_trace`, `abs_theta_trace` and `norm_progress_trace`; `:medium` adds
+  `x_trace`; `:high` is currently the same as `:medium`.
 - `mu::Real = 1.0`: Proximal parameter μ.
 
 # Returns
 - `ProxGradOptions`: A public configuration object for the ProxGrad solver.
 """
-function ProxGrad_options(; verbose=1, max_iter=1000, opt_tol=1e-4, ftol=1e-4, max_time=3600.0, print_interval=1, stop_criteria=:proxgrad, store_trace=false, mu=1.0)
-    return ProxGradOptions(verbose, max_iter, opt_tol, ftol, max_time, print_interval, stop_criteria, store_trace, mu)
+function ProxGrad_options(; verbose=1, max_iter=1000, opt_tol=1e-4, ftol=1e-4, max_time=3600.0, print_interval=1, stop_criteria=:proxgrad, store_level=:none, mu=1.0)
+    return ProxGradOptions(verbose, max_iter, opt_tol, ftol, max_time, print_interval, stop_criteria, store_level, mu)
 end
 
 function _validate_proxgrad_options(options::ProxGradOptions)
@@ -107,6 +109,8 @@ function _validate_proxgrad_options(options::ProxGradOptions)
     options.print_interval > 0 || throw(ArgumentError("`print_interval` must be positive."))
     options.stop_criteria in (:proxgrad, :NormProgress) ||
         throw(ArgumentError("The stop criteria is not supported: $(options.stop_criteria)"))
+    options.store_level in STORE_LEVELS ||
+        throw(ArgumentError("The store level is not supported: $(options.store_level)"))
     return options
 end
 
@@ -127,7 +131,7 @@ function _convert_proxgrad_options(::Type{T}, options::ProxGradOptions) where {T
         Float64(options.max_time),
         options.print_interval,
         options.stop_criteria,
-        options.store_trace,
+        options.store_level,
         mu,
     )
 end
@@ -309,7 +313,7 @@ function _ProxGrad_optimize!(result::OptimResult, f!::Function, Jf!::Function, h
 
     F_ls .= Fx
     F_ls .+= h
-    update!(result, x=x, Fval=F_ls, store_trace=options.store_trace)
+    update!(result, x=x, Fval=F_ls, store_level=options.store_level)
     result.F_init .= result.Fval
 
     if !all(isfinite, Fx) || !all(isfinite, JF) || !all(isfinite, h)
@@ -334,7 +338,7 @@ function _ProxGrad_optimize!(result::OptimResult, f!::Function, Jf!::Function, h
 
     F_ls .= Fx
     F_ls .+= h
-    update!(result, x=x, abs_theta=abs(theta), Fval=F_ls, norm_progress=T(NaN), store_trace=options.store_trace)
+    update!(result, x=x, abs_theta=abs(theta), Fval=F_ls, norm_progress=T(NaN), store_level=options.store_level)
     result.F_init .= result.Fval
 
     if options.verbose > 0
@@ -414,7 +418,7 @@ function _ProxGrad_optimize!(result::OptimResult, f!::Function, Jf!::Function, h
         end
 
         # Update
-        update!(result, x=x, Fval=F_trial, abs_theta=abs(theta), norm_progress=norm_progress, iter=iter, store_trace=options.store_trace)
+        update!(result, x=x, Fval=F_trial, abs_theta=abs(theta), norm_progress=norm_progress, iter=iter, store_level=options.store_level)
 
         if options.verbose > 0
             if result.iter == 0 || (result.iter % options.print_interval == 0)
