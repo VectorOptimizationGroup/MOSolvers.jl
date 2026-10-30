@@ -38,10 +38,10 @@ With `step_tolerance_rule=:trace_scaled` and
 subproblem, the decrease test is
 
 ```math
-F_j(p)\le F_j(x)-\frac{\alpha\varepsilon^2}{32\sigma(1+T)^2},
+F_j(p)\le F_j(x)-\frac{\alpha\varepsilon^2}{27\sigma(1+T)^2},
 ```
 
-and the proximal criterion is ``\sigma\lVert p-x\rVert_2<\varepsilon/(4(1+T))``.
+and the proximal criterion is ``\sigma\lVert p-x\rVert_2<\varepsilon/(3(1+T))``.
 A step norm equal to the threshold stops under `:epsilon` and proceeds to the
 decrease test under `:trace_scaled`.
 

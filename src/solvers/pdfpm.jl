@@ -135,7 +135,7 @@ internally as a `Float64`.
 - `step_tolerance_rule::Symbol = :epsilon`: Thresholds of the proximal-step and sufficient-decrease tests.
   With `T = maxⱼ tr(Bⱼ)` for the curvature matrices of the current subproblem:
   - `:epsilon`: stop if `σ‖p-x‖ ≤ ε`; accept `p` if `Fⱼ(p) ≤ Fⱼ(x) - αε²/(2σ)` for all `j`.
-  - `:trace_scaled`: stop if `σ‖p-x‖ < ε/(4(1+T))`; accept `p` if `Fⱼ(p) ≤ Fⱼ(x) - αε²/(32σ(1+T)²)` for all `j`.
+  - `:trace_scaled`: stop if `σ‖p-x‖ < ε/(3(1+T))`; accept `p` if `Fⱼ(p) ≤ Fⱼ(x) - αε²/(27σ(1+T)²)` for all `j`.
 
 # Returns
 - `PDFPMOptions`: A public configuration object for the PDFPM solver.
@@ -603,8 +603,8 @@ Return the proximal-step stopping test and the sufficient-decrease amount of
 matrices `B` of the current subproblem.
 
 With `T = maxⱼ tr(Bⱼ)`, `:epsilon` stops on `σ‖p-x‖ ≤ ε` and requires
-`αε²/(2σ)`; `:trace_scaled` stops on `σ‖p-x‖ < ε/(4(1+T))` and requires
-`αε²/(32σ(1+T)²)`. A step norm equal to the threshold therefore stops under
+`αε²/(2σ)`; `:trace_scaled` stops on `σ‖p-x‖ < ε/(3(1+T))` and requires
+`αε²/(27σ(1+T)²)`. A step norm equal to the threshold therefore stops under
 `:epsilon` and proceeds to the decrease test under `:trace_scaled`.
 """
 function _pdfpm_step_tolerances(options::PDFPMParams{T}, sigma::T, B) where {T<:AbstractFloat}
@@ -612,8 +612,8 @@ function _pdfpm_step_tolerances(options::PDFPMParams{T}, sigma::T, B) where {T<:
         return (≤(options.epsilon)), (options.alpha * options.epsilon^2) / (2 * sigma)
     end
     trace_scale = 1 + maximum(tr, B)
-    return (<(options.epsilon / (4 * trace_scale))),
-           (options.alpha * options.epsilon^2) / (32 * sigma * trace_scale^2)
+    return (<(options.epsilon / (3 * trace_scale))),
+           (options.alpha * options.epsilon^2) / (27 * sigma * trace_scale^2)
 end
 
 # maxⱼ tr(Bⱼ) for the trace, computed only when it is recorded.
@@ -623,5 +623,5 @@ function _pdfpm_proximal_step_message(options::PDFPMParams)
     if options.step_tolerance_rule === :epsilon
         return "PDFPM proximal step satisfies sigma*norm(p-x) <= epsilon"
     end
-    return "PDFPM proximal step satisfies sigma*norm(p-x) < epsilon/(4(1+max_j tr(B_j)))"
+    return "PDFPM proximal step satisfies sigma*norm(p-x) < epsilon/(3(1+max_j tr(B_j)))"
 end

@@ -3,7 +3,8 @@ using LinearAlgebra
 using Test
 
 # Thresholds of PDFPM's proximal-step stop and sufficient-decrease acceptance.
-# Values are powers of two so that every threshold and equality is exact.
+# Inputs are chosen so that every stop threshold is exact; equality cases for
+# the decrease compare against the value the solver computes.
 
 step_tolerances(rule, sigma, B; epsilon=1.0, alpha=0.5) =
     MOSolvers._pdfpm_step_tolerances(
@@ -52,49 +53,53 @@ end
     @test stop(1.0)                                   # σ‖p-x‖ = ε stops
     @test !stop(nextfloat(1.0))
 
-    stop, decrease = step_tolerances(:trace_scaled, 2.0, B)
-    @test decrease == 0.5 / (32 * 2.0 * 16)           # αε²/(32σ(1+T)²)
-    @test !stop(1 / 16)                               # σ‖p-x‖ = ε/(4(1+T)) proceeds
+    # ε = 3/4: ε/(3(1+T)) = 1/16 exactly.
+    stop, decrease = step_tolerances(:trace_scaled, 2.0, B; epsilon=0.75)
+    @test decrease == 0.5 * 0.75^2 / (27 * 2.0 * 16)  # αε²/(27σ(1+T)²)
+    @test !stop(1 / 16)                               # σ‖p-x‖ = ε/(3(1+T)) proceeds
     @test stop(prevfloat(1 / 16))
 
-    # B = 0 gives T = 0: thresholds ε/4 and αε²/(32σ).
-    stop, decrease = step_tolerances(:trace_scaled, 1.0, [zeros(1, 1)])
-    @test decrease == 0.5 / 32
+    # B = 0 gives T = 0: thresholds ε/3 and αε²/(27σ); ε = 3/4 gives 1/4.
+    stop, decrease = step_tolerances(:trace_scaled, 1.0, [zeros(1, 1)]; epsilon=0.75)
+    @test decrease == 0.5 * 0.75^2 / 27
     @test !stop(0.25) && stop(prevfloat(0.25))
 end
 
 @testset "PDFPM step tolerance rule: inner loop" begin
-    # B0 = 3: 1 + T = 4, stop threshold ε/16 and decrease αε²/(32σ·16) = 2^-10.
+    # B0 = 3 and ε = 3/4: 1 + T = 4, stop threshold ε/(3·4) = 1/16 and decrease
+    # αε²/(27σ·16) with σ = 1.
+    epsilon = 0.75
     for verbose in (0, 1)
         # Step norm equal to the trace-scaled threshold: :trace_scaled proceeds to
         # the decrease test and accepts; :epsilon stops at the candidate.
         p = 2.0 - 1 / 16
-        result, calls = step_case(:trace_scaled; p_values=Dict(1 => p), verbose)
+        result, calls = step_case(:trace_scaled; p_values=Dict(1 => p), epsilon, verbose)
         @test result.status === :optimality_tolerance
         @test result.x == [p] && result.iter == 1 && calls == 2
-        result, calls = step_case(:epsilon; p_values=Dict(1 => p), verbose)
+        result, calls = step_case(:epsilon; p_values=Dict(1 => p), epsilon, verbose)
         @test result.status === :proximal_step_tolerance
         @test result.x == [p] && calls == 1
         @test result.message == "PDFPM proximal step satisfies sigma*norm(p-x) <= epsilon"
 
         # Step norm just below the trace-scaled threshold stops at the candidate.
         p = nextfloat(2.0 - 1 / 16)
-        result, _ = step_case(:trace_scaled; p_values=Dict(1 => p), verbose)
+        result, _ = step_case(:trace_scaled; p_values=Dict(1 => p), epsilon, verbose)
         @test result.status === :proximal_step_tolerance
         @test result.x == [p] && isnan(result.abs_theta)
-        @test occursin("max_j tr(B_j)", result.message)
+        @test occursin("epsilon/(3(1+max_j tr(B_j)))", result.message)
     end
 
     # Decrease equal to the trace-scaled requirement is accepted; one ulp less
     # is rejected. σ|p - x| = 3/2 > ε passes both stop tests; the :epsilon
-    # requirement αε²/(2σ) = 1/4 rejects both.
+    # requirement αε²/(2σ) = 9/64 rejects both.
     p = 0.5
-    for (F_p, accepted) in ((2.0 - 2.0^-10, true), (nextfloat(2.0 - 2.0^-10), false))
-        result, _ = step_case(:trace_scaled; p_values=Dict(1 => p),
+    _, decrease = step_tolerances(:trace_scaled, 1.0, [fill(3.0, 1, 1)]; epsilon)
+    for (F_p, accepted) in ((2.0 - decrease, true), (nextfloat(2.0 - decrease), false))
+        result, _ = step_case(:trace_scaled; p_values=Dict(1 => p), epsilon,
                               trial_F=Dict(p => F_p), max_subproblem_iter=1)
         @test result.status === (accepted ? :optimality_tolerance : :max_subproblem_iter)
         @test result.x == (accepted ? [p] : [2.0])
-        result, _ = step_case(:epsilon; p_values=Dict(1 => p),
+        result, _ = step_case(:epsilon; p_values=Dict(1 => p), epsilon,
                               trial_F=Dict(p => F_p), max_subproblem_iter=1)
         @test result.status === :max_subproblem_iter
     end
@@ -130,8 +135,9 @@ end
         # V1: σ|p - x| = ε/3 ≤ ε stops at k = 0.
         @test v1.result.status === :proximal_step_tolerance
         @test v1.result.iter == 1 && v1.Bs == [0.0]
-        # V2: ε/3 ≥ ε/4 proceeds; F(p) = 0 ≤ ε²/18 - ε²/64 accepts at the first
-        # attempt (σ = 1), then θ = 0 at x = 0 stops by optimality.
+        # V2: σ|p - x| = ε/3 equals ε/(3(1+T)) and proceeds; F(p) = 0 ≤
+        # ε²/18 - ε²/54 accepts at the first attempt (σ = 1), then θ = 0 at
+        # x = 0 stops by optimality.
         @test v2.result.status === :optimality_tolerance
         @test v2.result.iter == 1 && v2.result.x == [0.0]
         @test v2.Bs[1] == 0.0 && length(v2.Bs) == 2
