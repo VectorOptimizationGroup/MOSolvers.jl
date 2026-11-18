@@ -93,8 +93,10 @@ Compute the value of the convex function `h(x)` in-place.
 The function `h(x)` is defined component-wise as:
     h_j(x) = max { <x, z> | A_j z ≤ b_j }
 
-This involves solving a linear programming problem for each component `j`.
-Numerical issues (e.g., unboundedness) or solver failures are reported.
+With `SubProbParams.h_factors` set (see [`robust_subproblem_params`](@ref)), each component
+is `δ‖Ãⱼ⁻ᵀx‖₁`, computed from the stored factorization; a nonfinite `x` or result is reported.
+Otherwise this involves solving a linear programming problem for each component `j`, and
+numerical issues (e.g., unboundedness) or solver failures are reported.
 
 # Arguments
 - `h::AbstractVector`: Output vector where the values `h_j(x)` will be stored.
@@ -106,6 +108,9 @@ Numerical issues (e.g., unboundedness) or solver failures are reported.
 - `message::String`: Status message or error description.
 """
 function evalh!(h::AbstractVector{T}, x::AbstractVector{T}, SubProbParams::SubProblemParams) where {T<:AbstractFloat}
+
+    h_factors = SubProbParams.h_factors
+    h_factors === nothing || return _evalh_closed_form!(h, x, SubProbParams.delta, h_factors)
 
     n = length(x)
     m = length(SubProbParams.A)
@@ -164,4 +169,17 @@ function evalh!(h::AbstractVector{T}, x::AbstractVector{T}, SubProbParams::SubPr
     end
 
     return true, "All subproblems solved successfully"
+end
+
+# hⱼ(x) = δ‖Ãⱼ⁻ᵀx‖₁ from the stored factorizations of Ãⱼ.
+function _evalh_closed_form!(h::AbstractVector{T}, x::AbstractVector{T}, delta, h_factors) where {T<:AbstractFloat}
+    all(isfinite, x) || return false, "Failed evaluating h_1(x^k): x has nonfinite entries."
+    c = Vector{T}(undef, length(x))
+    for (j, F) in enumerate(h_factors)
+        c .= x
+        ldiv!(transpose(F), c)
+        h[j] = delta * norm(c, 1)
+        isfinite(h[j]) || return false, "Failed evaluating h_$j(x^k): the closed form is not finite."
+    end
+    return true, "All components evaluated by the closed form"
 end

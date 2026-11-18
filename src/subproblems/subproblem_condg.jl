@@ -5,17 +5,16 @@ Solve the CondG linear subproblem at point `x`.
 
 This function handles two cases:
 
-**Special Case (all h ≈ 0):**
+**Special Case (`b_j = 0` for all j, i.e. δ = 0, where h = 0 exactly):**
     min τ
     s.t.
     <∇f_j(x), u - x> ≤ τ,   (∀ j)
     lb ≤ u ≤ ub
 
-**General Case (some h_j ≉ 0):**
+**General Case (some `b_j ≠ 0`):**
     min τ
     s.t.
-    <∇f_j(x), u - x> + (<b_j, w_j> - h_j) ≤ τ,  if h_j ≉ 0
-    <∇f_j(x), u - x>                      ≤ τ,  if h_j ≈ 0
+    <∇f_j(x), u - x> + (<b_j, w_j> - h_j) ≤ τ
     A_j' w_j = u
     lb ≤ u ≤ ub,  w_j ≥ 0
 
@@ -26,7 +25,7 @@ This function handles two cases:
 - `SubProbParams::SubProblemParams`: Problem parameters (A, b, lb, ub).
 
 # Keywords
-- `tol::Real`: Tolerance for numerical comparisons and solver.
+- `tol::Real`: Feasibility tolerances of HiGHS, at least `1e-10`, the smallest it accepts.
 - `max_iter::Integer`: Maximum number of iterations.
 - `max_time::Real`: Maximum execution time.
 - `verbose::Integer`: Verbosity level.
@@ -59,8 +58,8 @@ function subproblem_condg(x::AbstractVector{T}, Jf::AbstractMatrix{T}, h::Abstra
     Iu = eachindex(SubProbParams.lb)
     m  = length(h)
 
-    # Detect special case: all h ≈ 0 (numerically)
-    all_h_zero = all(j -> isapprox(h[j], zero(T); atol = max(tol, T(1e-14))), 1:m)
+    # h is omitted only where it vanishes identically: b_j = 0 for all j (δ = 0)
+    all_h_zero = all(j -> all(iszero, SubProbParams.b[j]), 1:m)
 
     # -----------------------
     # Build (or reuse) model
@@ -82,8 +81,9 @@ function subproblem_condg(x::AbstractVector{T}, Jf::AbstractMatrix{T}, h::Abstra
     set_optimizer_attribute(model, "simplex_iteration_limit", max_iter)
     set_optimizer_attribute(model, "ipm_iteration_limit",      max_iter)
     set_optimizer_attribute(model, "time_limit",               float(max_time))
-    pf_tol = Float64(max(tol, T(1e-12)))
-    df_tol = Float64(max(tol, T(1e-12)))
+    # 1e-10 is the smallest value HiGHS accepts for these options
+    pf_tol = Float64(max(tol, T(1e-10)))
+    df_tol = Float64(max(tol, T(1e-10)))
     set_optimizer_attribute(model, "primal_feasibility_tolerance", pf_tol)
     set_optimizer_attribute(model, "dual_feasibility_tolerance",   df_tol)
     set_optimizer_attribute(model, "presolve", presolve)

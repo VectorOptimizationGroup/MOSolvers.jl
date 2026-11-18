@@ -5,17 +5,17 @@ Solve the PDFPM quadratic subproblem at point `x`.
 
 This function handles two cases:
 
-**Special Case (all h ≈ 0):**
+**Special Case (`b_j = 0` for all j, i.e. δ = 0, where h = 0 exactly):**
     min τ + (σ/2)||u - x||^2
     s.t.
     <∇f_j(x), u - x> + (1/2)(u - x)' B_j (u - x) ≤ τ,   (∀ j)
     lb ≤ u ≤ ub
 
-**General Case (some h_j ≉ 0):**
+**General Case (some `b_j ≠ 0`):**
     min τ + (σ/2)||u - x||^2
     s.t.
-    <∇f_j(x), u - x> + (1/2)(u - x)' B_j (u - x) + (<b_j, w_j> - h_j) ≤ τ,  if h_j ≉ 0
-    <∇f_j(x), u - x> + (1/2)(u - x)' B_j (u - x)                      ≤ τ,  if h_j ≈ 0
+    <∇f_j(x), u - x> + (1/2)(u - x)' B_j (u - x) + (<b_j, w_j> - h_j) ≤ τ,  if b_j ≠ 0
+    <∇f_j(x), u - x> + (1/2)(u - x)' B_j (u - x)                      ≤ τ,  if b_j = 0
     A_j' w_j = u (∀ j)
     lb ≤ u ≤ ub, w_j ≥ 0
 
@@ -125,10 +125,9 @@ function subproblem_pdfpm(x::AbstractVector{T}, Jf::AbstractMatrix{T}, h::Abstra
     # ------------------------------------------------------------------
     # Constraints
     # ------------------------------------------------------------------
-    all_h_zero = all(j -> isapprox(h[j], zero(T); atol = max(tol, T(1e-14))), 1:m)
-
-    if all_h_zero
-        # Special case: h ≈ 0 for all j → no w_j, no A_j' w_j = u
+    # The term h_j is omitted only where it vanishes identically: b_j = 0 (δ = 0).
+    if all(j -> all(iszero, b[j]), 1:m)
+        # Special case: b_j = 0 for all j → no w_j, no A_j' w_j = u
         for j in 1:m
             grad_j = view(Jf, j, axes(Jf,2))
             quad_j = 0.5 * dot(B_loc[j] * d, d)
@@ -152,7 +151,7 @@ function subproblem_pdfpm(x::AbstractVector{T}, Jf::AbstractMatrix{T}, h::Abstra
             # Constraint depending on h_j
             grad_j = view(Jf, j, axes(Jf,2))
             quad_j = 0.5 * dot(B_loc[j] * d, d)
-            if !isapprox(h[j], zero(T); atol = max(tol, T(1e-14)))
+            if !all(iszero, b[j])
                 @constraint(model, dot(grad_j, [d[i] for i in Iu]) + quad_j +
                                    (dot(b[j], wj) - h[j]) <= tau)
             else

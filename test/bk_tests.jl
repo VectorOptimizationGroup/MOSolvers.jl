@@ -33,7 +33,7 @@ end
 @testset "BK1 with CondG" begin
     prob = bk1_problem()
     A, delta = identity_data(length(prob.x0), length(prob.evalf(prob.x0)))
-    opts = CondG_options(verbose=0, max_iter=50, opt_tol=1e-6, ftol=1e-6, max_time=5.0)
+    opts = CondG_options(verbose=0, max_iter=50, opt_tol=1e-6, max_time=5.0)
 
     result = CondG(prob.evalf, prob.evalJf, A, delta, copy(prob.x0), opts; lb=prob.lb, ub=prob.ub)
 
@@ -45,7 +45,7 @@ end
 @testset "BK1 with ProxGrad" begin
     prob = bk1_problem()
     A, delta = identity_data(length(prob.x0), length(prob.evalf(prob.x0)))
-    opts = ProxGrad_options(verbose=0, max_iter=50, opt_tol=1e-6, ftol=1e-6, max_time=5.0, mu=1.0)
+    opts = ProxGrad_options(verbose=0, max_iter=50, opt_tol=1e-6, max_time=5.0, mu=1.0)
 
     result = ProxGrad(prob.evalf, prob.evalJf, A, delta, copy(prob.x0), opts; lb=prob.lb, ub=prob.ub)
 
@@ -57,7 +57,7 @@ end
 @testset "BK1 with PDFPM" begin
     prob = bk1_problem()
     A, delta = identity_data(length(prob.x0), length(prob.evalf(prob.x0)))
-    opts = PDFPM_options(verbose=0, max_iter=50, opt_tol=1e-6, ftol=1e-6, max_time=5.0, sigma=1.0, alpha=0.1, max_subproblem_iter=200)
+    opts = PDFPM_options(verbose=0, max_iter=50, epsilon=1e-2, max_time=5.0, sigma=1.0, alpha=0.1, max_subproblem_iter=200)
 
     result = PDFPM(prob.evalf, A, delta, copy(prob.x0), opts; evalJf=prob.evalJf, lb=prob.lb, ub=prob.ub)
 

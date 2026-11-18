@@ -12,34 +12,34 @@ Base.@kwdef struct ProxGradOptions
     verbose::Int = 1
     max_iter::Int = 1000
     opt_tol::Real = 1e-4
-    ftol::Real = 1e-4
     max_time::Real = 3600.0
     print_interval::Int = 1
-    stop_criteria::Symbol = :proxgrad
     store_level::Symbol = :none
     mu::Real = 1.0
+    max_cond_A::Real = 1e8
+    subproblem_tol::Union{Nothing,Real} = nothing
 
     function ProxGradOptions(
         verbose,
         max_iter,
         opt_tol,
-        ftol,
         max_time,
         print_interval,
-        stop_criteria,
         store_level,
         mu,
+        max_cond_A,
+        subproblem_tol,
     )
         options = new(
             Int(verbose),
             Int(max_iter),
             opt_tol,
-            ftol,
             max_time,
             Int(print_interval),
-            stop_criteria,
             store_level,
             mu,
+            max_cond_A,
+            subproblem_tol,
         )
         return _validate_proxgrad_options(options)
     end
@@ -53,24 +53,24 @@ Parameters for the Proximal Gradient solver.
 # Fields
 - `verbose::Int`: Verbose level (0: none, 1: normal, 2: detailed).
 - `max_iter::Int`: Maximum number of iterations.
-- `opt_tol::T`: Optimality tolerance (convergence criterion).
-- `ftol::T`: Function tolerance (convergence criterion).
+- `opt_tol::T`: Stop when `|θ| < opt_tol`.
 - `max_time::Float64`: Maximum execution time in seconds.
 - `print_interval::Int`: Interval for printing progress (in iterations).
-- `stop_criteria::Symbol`: Additional stopping criteria (`:proxgrad` or `:NormProgress`).
 - `store_level::Symbol`: Traces kept in the result (`:none`, `:low`, `:medium` or `:high`).
 - `mu::T`: Proximal parameter μ.
+- `max_cond_A::T`: Largest accepted condition number of the matrices `Ãⱼ` when `delta > 0`.
+- `subproblem_tol::T`: Tolerance of the subproblem solver.
 """
 struct ProxGradParams{T<:AbstractFloat}
     verbose::Int # Verbose level
     max_iter::Int # Maximum number of iterations
     opt_tol::T # Optimality tolerance
-    ftol::T # Function tolerance
     max_time::Float64 # Maximum time in seconds
     print_interval::Int # Print interval
-    stop_criteria::Symbol # Additional stop criteria
     store_level::Symbol # Trace level
     mu::T # Proximal parameter
+    max_cond_A::T # Largest accepted condition number of the matrices Ãⱼ
+    subproblem_tol::T # Tolerance of the subproblem solver
 end
 
 
@@ -86,53 +86,51 @@ internally as a `Float64`.
 # Keywords
 - `verbose::Integer = 1`: Verbose level (0: none, 1: normal, 2: detailed).
 - `max_iter::Integer = 1000`: Maximum number of iterations.
-- `opt_tol::Real = 1e-4`: Optimality tolerance.
-- `ftol::Real = 1e-4`: Function tolerance.
+- `opt_tol::Real = 1e-4`: Stop when `|θ| < opt_tol`, strictly.
 - `max_time::Real = 3600.0`: Maximum time in seconds.
 - `print_interval::Integer = 1`: Print interval.
-- `stop_criteria::Symbol = :proxgrad`: Additional stopping criteria (`:proxgrad` or `:NormProgress`).
 - `store_level::Symbol = :none`: Traces kept in the result. `:none` keeps none; `:low` keeps
   `Fval_trace`, `abs_theta_trace` and `norm_progress_trace`; `:medium` adds
   `x_trace`; `:high` is currently the same as `:medium`.
 - `mu::Real = 1.0`: Proximal parameter μ.
+- `max_cond_A::Real = 1e8`: Largest accepted `κ₂(Ãⱼ)` when `delta > 0`; see [`robust_subproblem_params`](@ref).
+- `subproblem_tol::Union{Nothing,Real} = nothing`: Tolerance of the subproblem solver; `nothing` means `sqrt(eps(T))` for the element type `T` of `x0`.
 
 # Returns
 - `ProxGradOptions`: A public configuration object for the ProxGrad solver.
 """
-function ProxGrad_options(; verbose=1, max_iter=1000, opt_tol=1e-4, ftol=1e-4, max_time=3600.0, print_interval=1, stop_criteria=:proxgrad, store_level=:none, mu=1.0)
-    return ProxGradOptions(verbose, max_iter, opt_tol, ftol, max_time, print_interval, stop_criteria, store_level, mu)
+function ProxGrad_options(; verbose=1, max_iter=1000, opt_tol=1e-4, max_time=3600.0, print_interval=1, store_level=:none, mu=1.0, max_cond_A=1e8, subproblem_tol=nothing)
+    return ProxGradOptions(verbose, max_iter, opt_tol, max_time, print_interval, store_level, mu, max_cond_A, subproblem_tol)
 end
 
 function _validate_proxgrad_options(options::ProxGradOptions)
     options.max_iter >= 0 || throw(ArgumentError("`max_iter` must be nonnegative."))
     !isnan(options.max_time) && options.max_time >= 0.0 || throw(ArgumentError("`max_time` must be nonnegative or Inf."))
     options.print_interval > 0 || throw(ArgumentError("`print_interval` must be positive."))
-    options.stop_criteria in (:proxgrad, :NormProgress) ||
-        throw(ArgumentError("The stop criteria is not supported: $(options.stop_criteria)"))
     options.store_level in STORE_LEVELS ||
         throw(ArgumentError("The store level is not supported: $(options.store_level)"))
+    _check_max_cond_A(options.max_cond_A)
+    _check_subproblem_tol(options.subproblem_tol)
     return options
 end
 
 function _convert_proxgrad_options(::Type{T}, options::ProxGradOptions) where {T<:AbstractFloat}
     opt_tol = T(options.opt_tol)
-    ftol = T(options.ftol)
     mu = T(options.mu)
 
     isfinite(opt_tol) && opt_tol >= zero(T) || throw(ArgumentError("`opt_tol` must be finite and nonnegative."))
-    isfinite(ftol) && ftol >= zero(T) || throw(ArgumentError("`ftol` must be finite and nonnegative."))
     isfinite(mu) && mu > zero(T) || throw(ArgumentError("`mu` must be finite and positive."))
 
     return ProxGradParams{T}(
         options.verbose,
         options.max_iter,
         opt_tol,
-        ftol,
         Float64(options.max_time),
         options.print_interval,
-        options.stop_criteria,
         options.store_level,
         mu,
+        T(options.max_cond_A),
+        options.subproblem_tol === nothing ? sqrt(eps(T)) : T(options.subproblem_tol),
     )
 end
 
@@ -191,10 +189,6 @@ function ProxGrad(evalf::Function, evalJf::Function, A::AbstractVector{<:Abstrac
         @assert size(A[i], 1) == n && size(A[i], 2) == n "Matrix A[$i] must be square of size $n×$n"
     end
 
-    A_T = [T.(A[i]) for i in 1:m]
-    A2n = [[A_T[i]; -A_T[i]] for i in 1:m]
-    b2n = [delta_T * ones(T, 2*n) for i in 1:m]
-
     # Process bounds
     lb_vec = _convert_solver_bounds(T, lb, n, T(-Inf), :lb)
     ub_vec = _convert_solver_bounds(T, ub, n, T(Inf), :ub)
@@ -212,7 +206,7 @@ function ProxGrad(evalf::Function, evalJf::Function, A::AbstractVector{<:Abstrac
     end
 
     # Create the structure internally
-    SubProbParams = SubProblemParams(A2n, b2n, lb_vec, ub_vec)
+    SubProbParams = robust_subproblem_params(A, delta_T, lb_vec, ub_vec; max_cond_A=params.max_cond_A)
 
     # Create result structure
     result = OptimResult(x0_vec, fill(T(NaN), m))
@@ -240,11 +234,11 @@ function ProxGrad(evalf::Function, evalJf::Function, A::AbstractVector{<:Abstrac
 
     function subproblem(x, JF, h, method::Symbol)
         if method == :condg
-            return subproblem_condg(x, JF, h, SubProbParams; verbose=params.verbose)
+            return subproblem_condg(x, JF, h, SubProbParams; tol=params.subproblem_tol, verbose=params.verbose)
         elseif method == :proxgrad
-            return subproblem_proxgrad(x, JF, h, SubProbParams; sigma=params.mu, verbose=params.verbose)
+            return subproblem_proxgrad(x, JF, h, SubProbParams; sigma=params.mu, tol=params.subproblem_tol, verbose=params.verbose)
         elseif method == :pdfpm
-            return subproblem_pdfpm(x, JF, h, SubProbParams; verbose=params.verbose)
+            return subproblem_pdfpm(x, JF, h, SubProbParams; tol=params.subproblem_tol, verbose=params.verbose)
         else
             error("The subproblem method is not supported: $method")
         end
@@ -347,10 +341,10 @@ function _ProxGrad_optimize!(result::OptimResult, f!::Function, Jf!::Function, h
         end
     end
 
-    # Stopping criteria
-    if result.abs_theta <= options.opt_tol
+    # Stopping criterion
+    if result.abs_theta < options.opt_tol
         return _finalize_optimization!(result, options, total_start_time, :optimality_tolerance,
-                                       "Solution found at initial point with |θ_ProxGrad| ≤ $(options.opt_tol)")
+                                       "Solution found at initial point with |θ_ProxGrad| < $(options.opt_tol)")
     end
 
     # Reusable direction and line-search buffers
@@ -426,16 +420,10 @@ function _ProxGrad_optimize!(result::OptimResult, f!::Function, Jf!::Function, h
             end
         end
 
-        # Stopping criteria
-        # Test optimality
-        if options.stop_criteria == :NormProgress
-            if norm_progress <= options.ftol && result.abs_theta <= options.opt_tol
-                return _finalize_optimization!(result, options, total_start_time, :optimality_and_progress_tolerance,
-                                               "The solution was found using |θ_ProxGrad| <= $(options.opt_tol) and norm_progress <= $(options.ftol)")
-            end
-        elseif result.abs_theta <= options.opt_tol
+        # Stopping criterion
+        if result.abs_theta < options.opt_tol
             return _finalize_optimization!(result, options, total_start_time, :optimality_tolerance,
-                                           "The solution was found using |θ_ProxGrad| <= $(options.opt_tol)")
+                                           "The solution was found using |θ_ProxGrad| < $(options.opt_tol)")
         end
 
         abort = callback(iter, result)

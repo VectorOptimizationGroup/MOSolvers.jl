@@ -1,11 +1,12 @@
 using MOSolvers
+using LinearAlgebra
 using Test
 
 # Controlled subproblems isolate termination from backend tolerances. The real
 # objective and line search still run; every proposed step halves x.
 function termination_case(method; verbose=0, max_iter=1, converge_at=typemax(Int),
                           fail_at=0, fail_h=false, fail_search=false,
-                          abort=false, max_time=Inf, norm_progress=false, ftol=1.0,
+                          abort=false, max_time=Inf, opt_tol=1e-8,
                           theta_values=Dict{Int,Float64}(), ascent=false,
                           linesearch=BackTracking(), fail_h_at=0,
                           p_values=Dict{Int,Float64}(), initial_value=nothing,
@@ -39,7 +40,8 @@ function termination_case(method; verbose=0, max_iter=1, converge_at=typemax(Int
         throw_subproblem && error("injected subproblem exception")
         calls[] += 1
         theta = get(theta_values, calls[], calls[] >= converge_at ? 0.0 : -1.0)
-        p = [get(p_values, calls[], x[1] / 2)]
+        # A converged model measure comes with the stationary step p = x.
+        p = [get(p_values, calls[], calls[] >= converge_at ? x[1] : x[1] / 2)]
         return theta, p, calls[] != fail_at, "injected subproblem failure"
     end
     function callback(iter, result)
@@ -49,14 +51,12 @@ function termination_case(method; verbose=0, max_iter=1, converge_at=typemax(Int
         push!(callbacks, iter)
         return abort
     end
-    criterion = norm_progress ? :NormProgress : method
-    kwargs = (; verbose, max_iter, max_time, opt_tol=1e-8, ftol,
-              stop_criteria=criterion, store_level)
+    kwargs = (; verbose, max_iter, max_time, store_level)
     if method == :condg
-        options = MOSolvers._convert_condg_options(Float64, CondG_options(; kwargs...))
+        options = MOSolvers._convert_condg_options(Float64, CondG_options(; kwargs..., opt_tol))
         MOSolvers._CondG_optimize!(result, f!, Jf!, h!, 1, subproblem, options, callback; linesearch)
     elseif method == :proxgrad
-        options = MOSolvers._convert_proxgrad_options(Float64, ProxGrad_options(; kwargs...))
+        options = MOSolvers._convert_proxgrad_options(Float64, ProxGrad_options(; kwargs..., opt_tol))
         MOSolvers._ProxGrad_optimize!(result, f!, Jf!, h!, 1, subproblem, options, callback; linesearch)
     else
         options = MOSolvers._convert_pdfpm_options(Float64, PDFPM_options(; kwargs..., max_subproblem_iter, epsilon))
@@ -78,11 +78,17 @@ end
                 @test result.message == "Maximum number of iterations reached $max_iter"
                 @test result.iter == max_iter
 
+                # PDFPM has no test before Step 3, which needs an iteration.
                 result, _ = termination_case(method; verbose, max_iter, converge_at=1)
-                @test converged(result)
-                @test result.status === :optimality_tolerance
-                @test occursin("Solution found at initial point", result.message)
-                @test result.iter == 0
+                if method == :pdfpm
+                    @test result.status === (max_iter == 0 ? :max_iter : :proximal_step_tolerance)
+                    @test result.iter == max_iter
+                else
+                    @test converged(result)
+                    @test result.status === :optimality_tolerance
+                    @test occursin("Solution found at initial point", result.message)
+                    @test result.iter == 0
+                end
 
                 result, _ = termination_case(method; verbose, max_iter, fail_at=1)
                 @test !converged(result)
@@ -90,14 +96,32 @@ end
                 @test result.status === :subproblem_failure
             end
 
-            for norm_progress in (false, true)
-                result, _ = termination_case(method; verbose, converge_at=2, norm_progress)
+            if method == :pdfpm
+                # The model measure is only recorded: Step 3 stops one iteration later.
+                result, callbacks = termination_case(method; verbose, max_iter=2, converge_at=2)
                 @test converged(result)
-                @test result.status === (norm_progress ? :optimality_and_progress_tolerance : :optimality_tolerance)
+                @test result.status === :proximal_step_tolerance
+                @test result.iter == 2 && callbacks == [1]
+                @test result.x == [1.0] && result.Fval == [0.5]
+            else
+                result, _ = termination_case(method; verbose, converge_at=2)
+                @test converged(result)
+                @test result.status === :optimality_tolerance
                 @test occursin("The solution was found using", result.message)
                 @test result.iter == 1
                 @test result.x == [1.0]
                 @test result.Fval == [0.5]
+
+                # The test is strict, at the initial point and in the loop.
+                result, _ = termination_case(method; verbose, max_iter=1, opt_tol=1.0,
+                                             theta_values=Dict(1 => -1.0, 2 => -0.5))
+                @test result.status === :optimality_tolerance && result.iter == 1
+                result, _ = termination_case(method; verbose, max_iter=1, opt_tol=0.5,
+                                             theta_values=Dict(1 => -1.0, 2 => -0.5))
+                @test result.status === :max_iter
+                result, _ = termination_case(method; verbose, max_iter=0, opt_tol=1.0,
+                                             theta_values=Dict(1 => prevfloat(1.0)))
+                @test result.status === :optimality_tolerance
             end
 
             for max_iter in (1, 2)
@@ -140,22 +164,23 @@ end
     A = [ones(1, 1)]
     for method in (:condg, :proxgrad, :pdfpm), x0 in ([2.0], [0.0])
         results = map((0, 1)) do verbose
-            kwargs = (; verbose, max_iter=0, opt_tol=1e-6)
+            kwargs = (; verbose, max_iter=0)
             bounds = (; lb=[-3.0], ub=[3.0])
             if method == :condg
-                CondG(evalf, evalJf, A, 0.0, x0, CondG_options(; kwargs...); bounds...)
+                CondG(evalf, evalJf, A, 0.0, x0, CondG_options(; kwargs..., opt_tol=1e-6); bounds...)
             elseif method == :proxgrad
-                ProxGrad(evalf, evalJf, A, 0.0, x0, ProxGrad_options(; kwargs...); bounds...)
+                ProxGrad(evalf, evalJf, A, 0.0, x0, ProxGrad_options(; kwargs..., opt_tol=1e-6); bounds...)
             else
                 PDFPM(evalf, A, 0.0, x0, PDFPM_options(; kwargs...); evalJf, bounds...)
             end
         end
-        @test converged(results[1]) == converged(results[2]) == iszero(x0[1])
+        # With max_iter = 0, PDFPM never reaches Step 3.
+        @test converged(results[1]) == converged(results[2]) == (iszero(x0[1]) && method != :pdfpm)
         @test results[1].status == results[2].status
         @test results[1].message == results[2].message
         @test all(r -> r.iter == 0, results)
         @test x0 == results[1].x == results[2].x
-        if !iszero(x0[1])
+        if !iszero(x0[1]) || method == :pdfpm
             @test results[1].message == "Maximum number of iterations reached 0"
         end
     end
@@ -164,8 +189,8 @@ end
 @testset "Line search inside CondG and ProxGrad" begin
     for method in (:condg, :proxgrad)
         name = method == :condg ? "CondG" : "ProxGrad"
-        # θ = 0 when norm_progress does not stop the run: x is critical, no search.
-        result, _ = termination_case(method; max_iter=3, converge_at=2, norm_progress=true, ftol=0.1)
+        # θ = 0 with opt_tol = 0, where |θ| < opt_tol never holds: x is critical, no search.
+        result, _ = termination_case(method; max_iter=3, converge_at=2, opt_tol=0.0)
         @test converged(result)
         @test result.message == "The solution was found with |θ_$name| = 0"
         @test result.iter == 1 && result.x == [1.0] && result.Fval == [0.5]
@@ -217,15 +242,16 @@ end
 
     for method in (:condg, :proxgrad, :pdfpm), verbose in (0, 1)
         # A completed convergence check wins over callback and loop exhaustion.
-        result, callbacks = termination_case(method; verbose, converge_at=2, abort=true)
-        @test result.status === :optimality_tolerance
+        at = method == :pdfpm ? 1 : 2
+        result, callbacks = termination_case(method; verbose, converge_at=at, abort=true)
+        @test result.status === (method == :pdfpm ? :proximal_step_tolerance : :optimality_tolerance)
         @test converged(result) && isempty(callbacks)
         @test result.total_time >= 0
         @test result.message != "Optimization not started"
 
         # Preserve initialization policy: zero budget still checks the initial point.
         result, _ = termination_case(method; verbose, max_iter=0, max_time=0, converge_at=1)
-        @test result.status === :optimality_tolerance
+        @test result.status === (method == :pdfpm ? :max_iter : :optimality_tolerance)
         result, _ = termination_case(method; verbose, max_iter=0, max_time=0)
         @test result.status === :max_iter
 
@@ -293,17 +319,17 @@ end
                                      p_values=Dict(2 => NaN))
         @test result.status === :numerical_failure
 
-        # A rejected trial, successful refinement and final optimality check.
-        result, _ = termination_case(:pdfpm; verbose, max_subproblem_iter=2,
+        # A rejected trial, successful refinement and final Step 3.
+        result, _ = termination_case(:pdfpm; verbose, max_iter=2, max_subproblem_iter=2,
                                      p_values=Dict(1 => 3.0, 2 => 1.0), converge_at=3)
-        @test result.status === :optimality_tolerance
-        @test result.iter == 1 && result.x == [1.0] && result.Fval == [0.5]
+        @test result.status === :proximal_step_tolerance
+        @test result.iter == 2 && result.x == [1.0] && result.Fval == [0.5]
 
         # Even -Inf cannot count as sufficient decrease; retry with a finite point.
         for bad in (NaN, -Inf)
-            result, _ = termination_case(:pdfpm; verbose, max_subproblem_iter=2,
+            result, _ = termination_case(:pdfpm; verbose, max_iter=2, max_subproblem_iter=2,
                                          trial_value=bad, p_values=Dict(2 => 1.5), converge_at=3)
-            @test result.status === :optimality_tolerance
+            @test result.status === :proximal_step_tolerance
             @test result.x == [1.5] && result.Fval == [1.125]
         end
     end
@@ -313,18 +339,15 @@ end
     evalf(x) = [x[1]^2 / 2]
     evalJf(x) = reshape([x[1]], 1, 1)
     for method in (:condg, :proxgrad, :pdfpm)
-        # A singular A leaves the support problem unbounded; retain HiGHS' status.
+        # A singular A is rejected at construction.
         A = [zeros(1, 1)]
-        result = if method === :condg
+        @test_throws ArgumentError if method === :condg
             CondG(evalf, evalJf, A, 1.0, [2.0], CondG_options(verbose=0))
         elseif method === :proxgrad
             ProxGrad(evalf, evalJf, A, 1.0, [2.0], ProxGrad_options(verbose=0))
         else
             PDFPM(evalf, A, 1.0, [2.0], PDFPM_options(verbose=0); evalJf)
         end
-        @test result.status === :evaluation_failure
-        @test occursin("h_1", result.message) && occursin("HiGHS returned", result.message)
-        @test !converged(result) && all(isnan, result.Fval)
     end
 
     # The unbounded CondG subproblem must not become an outer infeasibility claim.
@@ -335,12 +358,62 @@ end
 
     for T in (Float32, Float64), x0 in (T[0], T[2])
         result = PDFPM(evalf, [ones(T, 1, 1)], zero(T), x0,
-                       PDFPM_options(verbose=0, max_iter=0, opt_tol=1e-6,
+                       PDFPM_options(verbose=0, max_iter=0,
                                      epsilon=0.1, lambda_factor=1.0, lambda_min=1e-4);
                        lb=T[-3], ub=T[3])
-        @test result.status === (iszero(x0[1]) ? :optimality_tolerance : :max_iter)
-        @test converged(result) == iszero(x0[1])
-        @test result.n_f_evals >= 4 && result.n_Jf_evals == 1
+        @test result.status === :max_iter
+        @test !converged(result)
+        @test result.n_f_evals >= 3 && result.n_Jf_evals == 1
         @test result.x == x0 && eltype(result.Fval) === T
     end
+end
+
+@testset "Only the method's own stopping criterion remains" begin
+    for opts in (CondG_options, ProxGrad_options, PDFPM_options)
+        @test_throws MethodError opts(ftol=1e-4)
+        @test_throws MethodError opts(stop_criteria=:NormProgress)
+    end
+    @test_throws MethodError PDFPM_options(opt_tol=1e-4)
+    @test_throws MethodError PDFPM_options(step_tolerance_rule=:trace_scaled)
+    @test :optimality_and_progress_tolerance ∉ MOSolvers._CONVERGENCE_STATUSES
+
+    # PDFPM ignores a vanishing model measure until Step 3 holds: θ = 0 from the
+    # controlled subproblem with a step that is still long.
+    result, _ = termination_case(:pdfpm; max_iter=3, theta_values=Dict(c => 0.0 for c in 1:5))
+    @test result.status === :max_iter && result.iter == 3
+    @test result.x == [0.25]
+    @test result.abs_theta == 0.0
+end
+
+@testset "h is omitted from the subproblems only for delta = 0" begin
+    # F(x) = cᵀx + δ‖x‖₁ with ‖c‖∞ ≤ δ has the minimizer x = 0, where h(0) = 0 and
+    # θ must vanish; omitting h there would give θ = -‖c‖²/(2σ).
+    c, delta = [0.05, -0.03], 0.1
+    n, A = 2, [[1.0 0.0; 0.0 1.0]]
+    bounds = (fill(-1.0, n), fill(1.0, n))
+    params = robust_subproblem_params(A, delta, bounds...)
+    x, Jf, h = zeros(n), permutedims(c), zeros(1)
+    @test evalh!(h, x, params)[1] && h == [0.0]
+    omitted = -sum(abs2, c) / 2
+    theta, p, ok, _ = MOSolvers.subproblem_pdfpm(x, Jf, h, params; B=[zeros(n, n)])
+    @test ok && abs(theta) <= 1e-7 && abs(theta) < abs(omitted) / 100 && norm(p) <= 1e-3
+    theta, p, ok, _ = MOSolvers.subproblem_proxgrad(x, Jf, h, params)
+    @test ok && abs(theta) <= 1e-7 && abs(theta) < abs(omitted) / 100 && norm(p) <= 1e-3
+    theta, _, ok, _ = MOSolvers.subproblem_condg(x, Jf, h, params)
+    @test ok && abs(theta) <= 1e-7
+
+    # Mixed objectives: a zero h_j at x with b_j ≠ 0 stays in the model.
+    A2 = [[1.0 0.0; 0.0 1.0], [1.0 0.0; 0.0 1.0]]
+    params2 = robust_subproblem_params(A2, delta, bounds...)
+    J2 = [c'; c']
+    theta, _, ok, _ = MOSolvers.subproblem_proxgrad(x, J2, zeros(2), params2)
+    @test ok && abs(theta) <= 1e-7
+
+    # delta = 0: the model has no h, and the omission is exact.
+    params0 = robust_subproblem_params(A, 0.0, bounds...)
+    theta, p, ok, _ = MOSolvers.subproblem_proxgrad(x, Jf, h, params0)
+    @test ok && isapprox(theta, omitted; atol=1e-6)
+    @test p ≈ -c atol = 1e-5
+    theta, p, ok, _ = MOSolvers.subproblem_condg(x, Jf, h, params0)
+    @test ok && isapprox(theta, -sum(abs, c); atol=1e-6) && all(abs.(p) .≈ 1.0)
 end

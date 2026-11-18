@@ -36,6 +36,8 @@ MOSolvers.converged
 
 ```@docs
 MOSolvers.SubProblemParams
+MOSolvers.robust_subproblem_params
+MOSolvers.h_matrix_diagnostics
 MOSolvers.evalh!
 MOSolvers.clear_evalh_cache!
 MOSolvers.set_evalh_highs_limits!

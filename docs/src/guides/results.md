@@ -11,6 +11,8 @@ The returned `MOSolvers.OptimResult` contains:
 | `norm_progress` | Normalized infinity-norm change of the recorded point |
 | `n_f_evals`, `n_Jf_evals` | Objective and Jacobian evaluator calls |
 | `total_time`, `subproblem_time` | Total time and time spent in direction subproblems, in seconds |
+| `sigma`, `max_tr_B`, `step_measure`, `step_threshold`, `required_decrease`, `actual_decrease` | PDFPM: data of the last step test; see [PDFPM](@ref) |
+| `n_sigma_doublings` | PDFPM: total doublings of σ in the run |
 | `status`, `message` | Stopping cause and explanatory text |
 
 For consecutive recorded points, progress is
@@ -32,9 +34,8 @@ model measures of the three algorithms interchangeable.
 
 | Status | Meaning | `converged(result)` |
 | --- | --- | --- |
-| `:optimality_tolerance` | Model measure satisfies `opt_tol`; includes initialization and CondG/ProxGrad's explicit zero-measure exit | `true` |
-| `:optimality_and_progress_tolerance` | Both model measure and progress satisfy their tolerances | `true` |
-| `:proximal_step_tolerance` | PDFPM satisfies `sigma * norm(p-x) <= epsilon` | `true` |
+| `:optimality_tolerance` | CondG/ProxGrad: `abs_theta < opt_tol`; includes initialization and the explicit zero-measure exit | `true` |
+| `:proximal_step_tolerance` | PDFPM satisfies `sigma * norm(p-x) < epsilon / (3(1 + T))`, with ``T=\max_j\operatorname{tr}(B_j)`` | `true` |
 | `:max_iter` | Outer iteration limit reached | `false` |
 | `:max_time` | Outer time limit reached | `false` |
 | `:callback` | Callback requested interruption | `false` |
@@ -55,7 +56,8 @@ are also `NaN`.
 
 ## Limits and failures
 
-The initial convergence test runs even with `max_iter=0` or `max_time=0`.
+CondG and ProxGrad run the initial convergence test even with `max_iter=0` or
+`max_time=0`. PDFPM has no test at the initial point before Step 3.
 A convergence test completed on the last iteration precedes the callback and
 loop exhaustion. A callback stop or specific failure retains its own cause.
 Time checks occur between operations; they do not interrupt an active evaluator

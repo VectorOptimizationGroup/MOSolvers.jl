@@ -129,8 +129,8 @@ function _global_header_pairs(options, n::Int, m::Int)
         "Variables (n)" => string(n),
         "Objectives (m)" => string(m),
         "Max Iterations" => string(options.max_iter),
-        "Optimality Tol" => @sprintf("%.2e", options.opt_tol),
-        "Progress Tol" => @sprintf("%.2e", options.ftol),
+        "Max Cond A" => @sprintf("%.2e", options.max_cond_A),
+        "Subproblem Tol" => @sprintf("%.2e", options.subproblem_tol),
     ]
     isfinite(options.max_time) && push!(pairs, "Max Time (s)" => @sprintf("%.2e", options.max_time))
     return pairs
@@ -145,7 +145,7 @@ _solver_header_pairs(options) = Pair{String,String}[]
 
 function _solver_header_pairs(options::CondGParams)
     return Pair{String,String}[
-        "Stop Criteria" => string(options.stop_criteria),
+        "Optimality Tol" => @sprintf("%.2e", options.opt_tol),
         "Store Level" => string(options.store_level),
     ]
 end
@@ -153,7 +153,6 @@ end
 function _solver_header_pairs(options::PDFPMParams)
     lambda_factor_str = options.lambda_factor isa Function ? "Function" : @sprintf("%.2e", options.lambda_factor)
     return Pair{String,String}[
-        "Stop Criteria" => string(options.stop_criteria),
         "Store Level" => string(options.store_level),
         "Epsilon (ϵ)" => @sprintf("%.2e", options.epsilon),
         "Sigma (σ)" => @sprintf("%.2e", options.sigma),
@@ -161,13 +160,14 @@ function _solver_header_pairs(options::PDFPMParams)
         "Max Subprob Iter" => string(options.max_subproblem_iter),
         "Lambda Factor" => lambda_factor_str,
         "Lambda Min" => @sprintf("%.2e", options.lambda_min),
-        "Step Tol Rule" => string(options.step_tolerance_rule),
+        "Decrease Rule" => string(options.decrease_rule),
+        "Curvature" => string(options.curvature),
     ]
 end
 
 function _solver_header_pairs(options::ProxGradParams)
     return Pair{String,String}[
-        "Stop Criteria" => string(options.stop_criteria),
+        "Optimality Tol" => @sprintf("%.2e", options.opt_tol),
         "Store Level" => string(options.store_level),
         "mu (μ)" => @sprintf("%.2e", options.mu),
     ]

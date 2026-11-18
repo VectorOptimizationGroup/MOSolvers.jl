@@ -12,11 +12,8 @@ to `Float64`.
 Base.@kwdef struct PDFPMOptions
     verbose::Int = 1
     max_iter::Int = 1000
-    opt_tol::Real = 1e-4
-    ftol::Real = 1e-4
     max_time::Real = 3600.0
     print_interval::Int = 1
-    stop_criteria::Symbol = :pdfpm
     store_level::Symbol = :none
     epsilon::Real = 1e-10
     sigma::Real = 1.0
@@ -24,16 +21,16 @@ Base.@kwdef struct PDFPMOptions
     max_subproblem_iter::Int = 200
     lambda_factor::Union{Function,Real} = 0.1
     lambda_min::Real = 1e-12
-    step_tolerance_rule::Symbol = :epsilon
+    max_cond_A::Real = 1e8
+    subproblem_tol::Union{Nothing,Real} = nothing
+    decrease_rule::Symbol = :proximal_step
+    curvature::Symbol = :bfgs
 
     function PDFPMOptions(
         verbose,
         max_iter,
-        opt_tol,
-        ftol,
         max_time,
         print_interval,
-        stop_criteria,
         store_level,
         epsilon,
         sigma,
@@ -41,16 +38,16 @@ Base.@kwdef struct PDFPMOptions
         max_subproblem_iter,
         lambda_factor,
         lambda_min,
-        step_tolerance_rule,
+        max_cond_A,
+        subproblem_tol,
+        decrease_rule,
+        curvature,
     )
         options = new(
             Int(verbose),
             Int(max_iter),
-            opt_tol,
-            ftol,
             max_time,
             Int(print_interval),
-            stop_criteria,
             store_level,
             epsilon,
             sigma,
@@ -58,7 +55,10 @@ Base.@kwdef struct PDFPMOptions
             Int(max_subproblem_iter),
             lambda_factor,
             lambda_min,
-            step_tolerance_rule,
+            max_cond_A,
+            subproblem_tol,
+            Symbol(decrease_rule),
+            Symbol(curvature),
         )
         return _validate_pdfpm_options(options)
     end
@@ -72,11 +72,8 @@ Parameters for the Partially Derivative-Free Proximal Method (PDFPM) solver.
 # Fields
 - `verbose::Int`: Verbose level (0: none, 1: normal, 2: detailed).
 - `max_iter::Int`: Maximum number of iterations.
-- `opt_tol::T`: Optimality tolerance (convergence criterion).
-- `ftol::T`: Function tolerance (convergence criterion).
 - `max_time::Float64`: Maximum execution time in seconds.
 - `print_interval::Int`: Interval for printing progress (in iterations).
-- `stop_criteria::Symbol`: Additional stopping criteria (`:pdfpm` or `:NormProgress`).
 - `store_level::Symbol`: Traces kept in the result (`:none`, `:low`, `:medium` or `:high`).
 - `epsilon::T`: Tolerance parameter ε for the subproblem.
 - `sigma::T`: Regularization parameter σ.
@@ -84,24 +81,27 @@ Parameters for the Partially Derivative-Free Proximal Method (PDFPM) solver.
 - `max_subproblem_iter::Int`: Maximum number of iterations for the subproblem.
 - `lambda_factor::Union{Function, T}`: Factor to determine the finite difference parameters.
 - `lambda_min::T`: Minimum value for the finite difference parameter λ.
-- `step_tolerance_rule::Symbol`: Proximal-step and sufficient-decrease thresholds (`:epsilon` or `:trace_scaled`).
+- `max_cond_A::T`: Largest accepted condition number of the matrices `Ãⱼ` when `delta > 0`.
+- `subproblem_tol::T`: Tolerance of the subproblem solver.
+- `decrease_rule::Symbol`: Decrease required in Step 4 (`:proximal_step` or `:epsilon_trace`).
+- `curvature::Symbol`: Curvature matrices `Bⱼ` (`:bfgs` or `:zero`).
 """
 struct PDFPMParams{T<:AbstractFloat}
     verbose::Int # Verbose level
     max_iter::Int # Maximum number of iterations
-    opt_tol::T # Optimality tolerance
-    ftol::T # Function tolerance
     max_time::Float64 # Maximum time in seconds
     print_interval::Int # Print interval
-    stop_criteria::Symbol # Additional stop criteria
     store_level::Symbol # Trace level
     epsilon::T # Epsilon parameter for finite differences
     sigma::T # Sigma parameter for regularization
     alpha::T # Alpha parameter for sufficient decrease
     max_subproblem_iter::Int # Maximum subproblem iterations
-    lambda_factor::Union{Function, T} # Percentage in [0,1] of the interval [0, ϵ/(σ√n)] used as λ via λ = max(lambda_factor * ϵ/(σ√n), λ_min). If a Function, it is evaluated at runtime; called as lambda_factor(; iter); the return value is converted to T
+    lambda_factor::Union{Function, T} # Percentage in [0,1] of the interval [0, ϵ/(σ√n)] used as λ via λ = min(max(lambda_factor * ϵ/(σ√n), λ_min), ϵ/(σ√n)). If a Function, it is evaluated at runtime; called as lambda_factor(; iter); the return value is converted to T
     lambda_min::T # Minimum lambda for finite differences
-    step_tolerance_rule::Symbol # Thresholds of the proximal-step and sufficient-decrease tests
+    max_cond_A::T # Largest accepted condition number of the matrices Ãⱼ
+    subproblem_tol::T # Tolerance of the subproblem solver
+    decrease_rule::Symbol # Decrease required in Step 4
+    curvature::Symbol # Curvature matrices B_j
 end
 
 
@@ -117,31 +117,33 @@ internally as a `Float64`.
 # Keywords
 - `verbose::Integer = 1`: Verbose level (0: none, 1: normal, 2: detailed).
 - `max_iter::Integer = 1000`: Maximum number of iterations.
-- `opt_tol::Real = 1e-4`: Optimality tolerance.
-- `ftol::Real = 1e-4`: Function tolerance.
 - `max_time::Real = 3600.0`: Maximum time in seconds.
 - `print_interval::Integer = 1`: Print interval.
-- `stop_criteria::Symbol = :pdfpm`: Additional stopping criteria (`:pdfpm` or `:NormProgress`).
 - `store_level::Symbol = :none`: Traces kept in the result. `:none` keeps none; `:low` keeps
   `Fval_trace`, `abs_theta_trace`, `norm_progress_trace`, and the σ and `maxⱼ tr(Bⱼ)` of the
   tests behind each point (`sigma_trace`, `max_tr_B_trace`); `:medium` adds `x_trace`;
   `:high` is currently the same as `:medium`.
-- `epsilon::Real = 1e-10`: Tolerance parameter ε.
+- `epsilon::Real = 1e-10`: Tolerance parameter ε. With `T = maxⱼ tr(Bⱼ)` for the curvature
+  matrices of the current subproblem, PDFPM stops if `σ‖p-x‖ < ε/(3(1+T))` (Step 3); otherwise
+  it accepts `p` if `Fⱼ(p) ≤ Fⱼ(x) - d` for all `j` (Step 4), with `d` given by `decrease_rule`.
 - `sigma::Real = 1.0`: Regularization parameter σ.
 - `alpha::Real = 0.1`: Parameter α for sufficient decrease.
 - `max_subproblem_iter::Integer = 200`: Maximum subproblem iterations.
 - `lambda_factor::Union{Real,Function} = 0.1`: Factor for the finite-difference step. Numeric values are clamped to `[0, 1]`; functions are called as `lambda_factor(; iter)`.
-- `lambda_min::Real = 1e-12`: Minimum finite difference step λ.
-- `step_tolerance_rule::Symbol = :epsilon`: Thresholds of the proximal-step and sufficient-decrease tests.
-  With `T = maxⱼ tr(Bⱼ)` for the curvature matrices of the current subproblem:
-  - `:epsilon`: stop if `σ‖p-x‖ ≤ ε`; accept `p` if `Fⱼ(p) ≤ Fⱼ(x) - αε²/(2σ)` for all `j`.
-  - `:trace_scaled`: stop if `σ‖p-x‖ < ε/(3(1+T))`; accept `p` if `Fⱼ(p) ≤ Fⱼ(x) - αε²/(27σ(1+T)²)` for all `j`.
+- `lambda_min::Real = 1e-12`: Minimum finite difference step λ; it never lifts λ above `ε/(σ√n)`, the bound of Step 1.
+- `max_cond_A::Real = 1e8`: Largest accepted `κ₂(Ãⱼ)` when `delta > 0`; see [`robust_subproblem_params`](@ref).
+- `subproblem_tol::Union{Nothing,Real} = nothing`: Tolerance of the subproblem solver; `nothing` means `sqrt(eps(T))` for the element type `T` of `x0`.
+- `decrease_rule::Symbol = :proximal_step`: Decrease `d` required in Step 4. `:proximal_step`
+  is `d = (α/2)σ‖p-x‖²`; `:epsilon_trace` is `d = αε²/(27σ(1+T)²)`, the rule before this option.
+- `curvature::Symbol = :bfgs`: Curvature matrices `Bⱼ`. `:bfgs` starts from the identity and
+  applies the safeguarded BFGS update after each accepted step; `:zero` keeps `Bⱼ = 0` in every
+  iteration, without update, so `T = 0` and Step 3 uses `ε/3`.
 
 # Returns
 - `PDFPMOptions`: A public configuration object for the PDFPM solver.
 """
-function PDFPM_options(; verbose=1, max_iter=1000, opt_tol=1e-4, ftol=1e-4, max_time=3600.0, print_interval=1, stop_criteria=:pdfpm, store_level=:none, epsilon=1e-10, sigma=1.0, alpha=0.1, max_subproblem_iter=200, lambda_factor=0.1, lambda_min=1e-12, step_tolerance_rule=:epsilon)
-    return PDFPMOptions(verbose, max_iter, opt_tol, ftol, max_time, print_interval, stop_criteria, store_level, epsilon, sigma, alpha, max_subproblem_iter, lambda_factor, lambda_min, step_tolerance_rule)
+function PDFPM_options(; verbose=1, max_iter=1000, max_time=3600.0, print_interval=1, store_level=:none, epsilon=1e-10, sigma=1.0, alpha=0.1, max_subproblem_iter=200, lambda_factor=0.1, lambda_min=1e-12, max_cond_A=1e8, subproblem_tol=nothing, decrease_rule=:proximal_step, curvature=:bfgs)
+    return PDFPMOptions(verbose, max_iter, max_time, print_interval, store_level, epsilon, sigma, alpha, max_subproblem_iter, lambda_factor, lambda_min, max_cond_A, subproblem_tol, decrease_rule, curvature)
 end
 
 function _validate_pdfpm_options(options::PDFPMOptions)
@@ -149,26 +151,30 @@ function _validate_pdfpm_options(options::PDFPMOptions)
     !isnan(options.max_time) && options.max_time >= 0.0 || throw(ArgumentError("`max_time` must be nonnegative or Inf."))
     options.print_interval > 0 || throw(ArgumentError("`print_interval` must be positive."))
     options.max_subproblem_iter > 0 || throw(ArgumentError("`max_subproblem_iter` must be positive."))
-    options.stop_criteria in (:pdfpm, :NormProgress) ||
-        throw(ArgumentError("The stop criteria is not supported: $(options.stop_criteria)"))
     options.store_level in STORE_LEVELS ||
         throw(ArgumentError("The store level is not supported: $(options.store_level)"))
-    options.step_tolerance_rule in (:epsilon, :trace_scaled) ||
-        throw(ArgumentError("The step tolerance rule is not supported: $(options.step_tolerance_rule)"))
+    _check_max_cond_A(options.max_cond_A)
+    _check_subproblem_tol(options.subproblem_tol)
+    options.decrease_rule in PDFPM_DECREASE_RULES ||
+        throw(ArgumentError("The decrease rule is not supported: $(options.decrease_rule); use one of $(PDFPM_DECREASE_RULES)"))
+    options.curvature in PDFPM_CURVATURES ||
+        throw(ArgumentError("The curvature is not supported: $(options.curvature); use one of $(PDFPM_CURVATURES)"))
     return options
 end
 
+"""Decrease rules of Step 4 accepted by `PDFPM_options` (`decrease_rule`)."""
+const PDFPM_DECREASE_RULES = (:proximal_step, :epsilon_trace)
+
+"""Curvature matrices accepted by `PDFPM_options` (`curvature`)."""
+const PDFPM_CURVATURES = (:bfgs, :zero)
+
 function _convert_pdfpm_options(::Type{T}, options::PDFPMOptions) where {T<:AbstractFloat}
-    opt_tol = T(options.opt_tol)
-    ftol = T(options.ftol)
     epsilon = T(options.epsilon)
     sigma = T(options.sigma)
     alpha = T(options.alpha)
     lambda_min = T(options.lambda_min)
     lambda_factor = options.lambda_factor isa Function ? options.lambda_factor : clamp(T(options.lambda_factor), zero(T), one(T))
 
-    isfinite(opt_tol) && opt_tol >= zero(T) || throw(ArgumentError("`opt_tol` must be finite and nonnegative."))
-    isfinite(ftol) && ftol >= zero(T) || throw(ArgumentError("`ftol` must be finite and nonnegative."))
     isfinite(epsilon) && epsilon > zero(T) || throw(ArgumentError("`epsilon` must be finite and positive."))
     isfinite(sigma) && sigma > zero(T) || throw(ArgumentError("`sigma` must be finite and positive."))
     isfinite(alpha) && alpha > zero(T) || throw(ArgumentError("`alpha` must be finite and positive."))
@@ -180,11 +186,8 @@ function _convert_pdfpm_options(::Type{T}, options::PDFPMOptions) where {T<:Abst
     return PDFPMParams{T}(
         options.verbose,
         options.max_iter,
-        opt_tol,
-        ftol,
         Float64(options.max_time),
         options.print_interval,
-        options.stop_criteria,
         options.store_level,
         epsilon,
         sigma,
@@ -192,7 +195,10 @@ function _convert_pdfpm_options(::Type{T}, options::PDFPMOptions) where {T<:Abst
         options.max_subproblem_iter,
         lambda_factor,
         lambda_min,
-        options.step_tolerance_rule,
+        T(options.max_cond_A),
+        options.subproblem_tol === nothing ? sqrt(eps(T)) : T(options.subproblem_tol),
+        options.decrease_rule,
+        options.curvature,
     )
 end
 
@@ -248,10 +254,6 @@ function PDFPM(evalf::Function, A::AbstractVector{<:AbstractMatrix}, delta::Real
         @assert size(A[i], 1) == n && size(A[i], 2) == n "Matrix A[$i] must be square of size $n×$n"
     end
 
-    A_T = [T.(A[i]) for i in 1:m]
-    A2n = [[A_T[i]; -A_T[i]] for i in 1:m]
-    b2n = [delta_T * ones(T, 2*n) for i in 1:m]
-
     # Process bounds
     lb_vec = _convert_solver_bounds(T, lb, n, T(-Inf), :lb)
     ub_vec = _convert_solver_bounds(T, ub, n, T(Inf), :ub)
@@ -269,7 +271,7 @@ function PDFPM(evalf::Function, A::AbstractVector{<:AbstractMatrix}, delta::Real
     end
 
     # Create the structure internally
-    SubProbParams = SubProblemParams(A2n, b2n, lb_vec, ub_vec)
+    SubProbParams = robust_subproblem_params(A, delta_T, lb_vec, ub_vec; max_cond_A=params.max_cond_A)
 
     # Create result structure
     result = OptimResult(x0_vec, fill(T(NaN), m))
@@ -305,11 +307,11 @@ function PDFPM(evalf::Function, A::AbstractVector{<:AbstractMatrix}, delta::Real
 
     function subproblem(x, JF, h, method::Symbol; sigma::T=1.0, B::Union{Nothing, Vector{<:AbstractMatrix{T}}}=nothing)
         if method == :condg
-            return subproblem_condg(x, JF, h, SubProbParams; verbose=params.verbose)
+            return subproblem_condg(x, JF, h, SubProbParams; tol=params.subproblem_tol, verbose=params.verbose)
         elseif method == :proxgrad
-            return subproblem_proxgrad(x, JF, h, SubProbParams; sigma=sigma, verbose=params.verbose)
+            return subproblem_proxgrad(x, JF, h, SubProbParams; sigma=sigma, tol=params.subproblem_tol, verbose=params.verbose)
         elseif method == :pdfpm
-            return subproblem_pdfpm(x, JF, h, SubProbParams; sigma=sigma, B=B, verbose=params.verbose)
+            return subproblem_pdfpm(x, JF, h, SubProbParams; sigma=sigma, B=B, tol=params.subproblem_tol, verbose=params.verbose)
         else
             error("The subproblem method is not supported: $method")
         end
@@ -323,8 +325,8 @@ end
     _PDFPM_optimize!(result, f!, Jf!, Jf_is_analytic, h!, m, subproblem, options, callback; initial_B=nothing)
 
 Internal function that implements the PDFPM algorithm. `initial_B` replaces the
-identity as the initial curvature matrices; it is copied and is not part of the
-public interface.
+initial curvature matrices of `options.curvature` (identity for `:bfgs`, zero for `:zero`);
+it is copied and is not part of the public interface.
 """
 function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_is_analytic::Bool, h!::Function, m::Int, subproblem::Function, options::PDFPMParams{T}, callback::Function; total_start_time=time(), initial_B=nothing) where {T<:AbstractFloat}
 
@@ -343,8 +345,10 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_i
     #Initialize theta
     theta = T(NaN)
 
-    # Initialize B matrices as identity for each objective
-    B = initial_B === nothing ? [Matrix{T}(I, n, n) for _ in 1:m] : [Matrix{T}(Bj) for Bj in initial_B]
+    # Initial curvature matrices: identity for BFGS, zero for :zero. Zero matrices, not
+    # `B = nothing`, which the subproblem reads as the identity.
+    B = initial_B !== nothing ? [Matrix{T}(Bj) for Bj in initial_B] :
+        options.curvature === :zero ? [zeros(T, n, n) for _ in 1:m] : [Matrix{T}(I, n, n) for _ in 1:m]
 
     # Initialize sigma
     sigma = options.sigma
@@ -356,7 +360,7 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_i
 
     lambda = ifelse(
         isfinite(scale) && scale > 0,
-        max(scale * lambda_factor_val, options.lambda_min),
+        min(max(scale * lambda_factor_val, options.lambda_min), scale),
         options.lambda_min
     )
 
@@ -411,12 +415,6 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_i
         end
     end
 
-    # Stopping criteria
-    if result.abs_theta <= options.opt_tol
-        return _finalize_optimization!(result, options, total_start_time, :optimality_tolerance,
-                                       "Solution found at initial point with |θ_PDFPM| ≤ $(options.opt_tol)")
-    end
-
     for iter in 1:options.max_iter
 
         if time() - start_time >= options.max_time
@@ -428,9 +426,18 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_i
 
         for sub_iter in 1:options.max_subproblem_iter
             # p was computed with the current B, which is fixed inside this loop
-            stop_step, decrease = _pdfpm_step_tolerances(options, sigma, B)
-            # Check convergence
-            if stop_step(sigma * norm(p - x))
+            step_norm = norm(p - x)
+            step_threshold, decrease, max_tr_B = _pdfpm_step_tolerances(options, sigma, B, step_norm)
+            step_measure = sigma * step_norm
+            # Diagnostics of this test; they do not enter the method
+            result.sigma = sigma
+            result.max_tr_B = max_tr_B
+            result.step_measure = step_measure
+            result.step_threshold = step_threshold
+            result.required_decrease = decrease
+            result.actual_decrease = T(NaN)
+            # Step 3: the only convergence test
+            if step_measure < step_threshold
                 x .= p
 
                 # Update result
@@ -458,7 +465,7 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_i
                 end
 
                 return _finalize_optimization!(result, options, total_start_time, :proximal_step_tolerance,
-                                               _pdfpm_proximal_step_message(options))
+                                               "PDFPM proximal step satisfies sigma*norm(p-x) < epsilon/(3(1+max_j tr(B_j)))")
             end
 
             # Check sufficient decrease
@@ -472,6 +479,7 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_i
             end
 
             Fx .+= h
+            result.actual_decrease = minimum(result.Fval .- Fx)
 
             if all(isfinite, Fx) && all(Fx .<= result.Fval .- decrease)
                 # Update x
@@ -483,13 +491,14 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_i
                                                    "The maximum subiteration limit was reached ($(options.max_subproblem_iter)); sigma=$sigma")
                 end
                 sigma = sigma * 2
+                result.n_sigma_doublings += 1
                 if !Jf_is_analytic
                     # Update lambda (keep computations in type T)
                     scale = options.epsilon / (sigma * sqrt_n)
                     lambda_factor_val = options.lambda_factor isa Function ? convert(T, options.lambda_factor(; iter=iter)) : convert(T, options.lambda_factor)
                     lambda = ifelse(
                         isfinite(scale) && scale > 0,
-                        max(scale * lambda_factor_val, options.lambda_min),
+                        min(max(scale * lambda_factor_val, options.lambda_min), scale),
                         options.lambda_min
                     )
                     Jf!(JF, x; lambda=lambda)
@@ -529,7 +538,7 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_i
 
             lambda = ifelse(
                 isfinite(scale) && scale > 0,
-                max(scale * lambda_factor_val, options.lambda_min),
+                min(max(scale * lambda_factor_val, options.lambda_min), scale),
                 options.lambda_min
             )
         end
@@ -544,9 +553,11 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_i
         # max_j tr(B_j) of the subproblem that produced the accepted step, before the update
         step_max_tr_B = _pdfpm_traced_max_tr(options, B)
 
-        # Update B matrices using BFGS
-        theta_bfgs = isfinite(theta) ? theta : one(T)  # ensures eps ≈ 1e-6 inside bfgsupdate!
-        bfgsupdate!(B, x, result.x, JF, JF_prev, theta_bfgs) # TODO: Check here if the B matrices is ill-conditioned
+        # Update B matrices using BFGS; with :zero they stay zero
+        if options.curvature === :bfgs
+            theta_bfgs = isfinite(theta) ? theta : one(T)  # ensures eps ≈ 1e-6 inside bfgsupdate!
+            bfgsupdate!(B, x, result.x, JF, JF_prev, theta_bfgs) # TODO: Check here if the B matrices is ill-conditioned
+        end
 
         # Solve the subproblem with multiple iterations
         start_subproblem_time = time()
@@ -569,18 +580,6 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_i
             end
         end
 
-        # Stopping criteria
-        # Test optimality
-        if options.stop_criteria == :NormProgress
-            if norm_progress <= options.ftol && result.abs_theta <= options.opt_tol
-                return _finalize_optimization!(result, options, total_start_time, :optimality_and_progress_tolerance,
-                                               "The solution was found using |θ_PDFPM| <= $(options.opt_tol) and norm_progress <= $(options.ftol)")
-            end
-        elseif result.abs_theta <= options.opt_tol
-            return _finalize_optimization!(result, options, total_start_time, :optimality_tolerance,
-                                           "The solution was found using |θ_PDFPM| <= $(options.opt_tol)")
-        end
-
         abort = callback(iter, result)
 
         # External interruption
@@ -596,32 +595,21 @@ function _PDFPM_optimize!(result::OptimResult, f!::Function, Jf!::Function, Jf_i
 end
 
 """
-    _pdfpm_step_tolerances(options, sigma, B)
+    _pdfpm_step_tolerances(options, sigma, B, step_norm)
 
-Return the proximal-step stopping test and the sufficient-decrease amount of
-`options.step_tolerance_rule` for the regularization `sigma` and the curvature
-matrices `B` of the current subproblem.
-
-With `T = maxⱼ tr(Bⱼ)`, `:epsilon` stops on `σ‖p-x‖ ≤ ε` and requires
-`αε²/(2σ)`; `:trace_scaled` stops on `σ‖p-x‖ < ε/(3(1+T))` and requires
-`αε²/(27σ(1+T)²)`. A step norm equal to the threshold therefore stops under
-`:epsilon` and proceeds to the decrease test under `:trace_scaled`.
+Return the thresholds of Steps 3 and 4 of the method for the regularization `sigma`, the
+curvature matrices `B` of the current subproblem and the step norm `‖p-x‖`, followed by
+`T = maxⱼ tr(Bⱼ)`: the proximal step stops on `σ‖p-x‖ < ε/(3(1+T))`, and acceptance requires
+the decrease `(α/2)σ‖p-x‖²` (`decrease_rule = :proximal_step`) or `αε²/(27σ(1+T)²)`
+(`:epsilon_trace`).
 """
-function _pdfpm_step_tolerances(options::PDFPMParams{T}, sigma::T, B) where {T<:AbstractFloat}
-    if options.step_tolerance_rule === :epsilon
-        return (≤(options.epsilon)), (options.alpha * options.epsilon^2) / (2 * sigma)
-    end
-    trace_scale = 1 + maximum(tr, B)
-    return (<(options.epsilon / (3 * trace_scale))),
-           (options.alpha * options.epsilon^2) / (27 * sigma * trace_scale^2)
+function _pdfpm_step_tolerances(options::PDFPMParams{T}, sigma::T, B, step_norm::T) where {T<:AbstractFloat}
+    max_tr_B = maximum(tr, B)
+    trace_scale = 1 + max_tr_B
+    decrease = options.decrease_rule === :proximal_step ? options.alpha / 2 * sigma * step_norm^2 :
+               (options.alpha * options.epsilon^2) / (27 * sigma * trace_scale^2)
+    return options.epsilon / (3 * trace_scale), decrease, max_tr_B
 end
 
 # maxⱼ tr(Bⱼ) for the trace, computed only when it is recorded.
 _pdfpm_traced_max_tr(options::PDFPMParams, B) = options.store_level === :none ? nothing : maximum(tr, B)
-
-function _pdfpm_proximal_step_message(options::PDFPMParams)
-    if options.step_tolerance_rule === :epsilon
-        return "PDFPM proximal step satisfies sigma*norm(p-x) <= epsilon"
-    end
-    return "PDFPM proximal step satisfies sigma*norm(p-x) < epsilon/(3(1+max_j tr(B_j)))"
-end

@@ -6,17 +6,16 @@ Each method has an options constructor: [`CondG_options`](@ref),
 | Common option | Default | Meaning |
 | --- | --- | --- |
 | `max_iter` | `1000` | Maximum outer iterations |
-| `opt_tol` | `1e-4` | Tolerance on the method's model measure |
-| `stop_criteria` | Method name as a symbol | Model measure, or `:NormProgress` for measure and progress together |
-| `ftol` | `1e-4` | Progress tolerance used by `:NormProgress` |
 | `max_time` | `3600.0` | Execution-time limit in seconds |
 | `verbose` | `1` | `0` suppresses solver progress and termination summaries |
 | `print_interval` | `1` | Number of iterations between progress rows |
 | `store_level` | `:none` | Traces kept in the result: `:none`, `:low`, `:medium`, or `:high` |
+| `max_cond_A` | `1e8` | Largest accepted ``\kappa_2(\tilde A_j)`` when `delta > 0` |
+| `subproblem_tol` | `sqrt(eps(T))` | Tolerance of the subproblem solver (Ipopt; in CondG, HiGHS, which is limited to at least `1e-10`), for the element type `T` of `x0` |
 
-ProxGrad adds `mu`. PDFPM adds `sigma`, `epsilon`, `alpha`,
-`max_subproblem_iter`, `lambda_factor`, `lambda_min`, and `step_tolerance_rule`;
-see [PDFPM](@ref).
+CondG and ProxGrad add `opt_tol` (default `1e-4`), the strict tolerance on the
+method's model measure; ProxGrad also adds `mu`. PDFPM adds `sigma`, `epsilon`, `alpha`,
+`max_subproblem_iter`, `lambda_factor`, and `lambda_min`; see [PDFPM](@ref).
 CondG and ProxGrad accept a separate `linesearch` keyword; see
 [Line search](@ref backtracking).
 
@@ -36,9 +35,12 @@ For finite-difference restrictions, see [PDFPM](@ref).
 Pass `callback(iter, result)` as a solver keyword. Returning exactly `true`
 requests interruption; other return values continue the iteration.
 
-Callbacks run after the convergence check of an outer iteration. They are not
-called at the initial point or on an iteration that already satisfies a stopping
-criterion. During execution, `result.status` is `:running`; `total_time` is
+Callbacks run after the convergence check of an outer iteration, with `result.x`
+and `result.Fval` at the accepted iterate. In PDFPM this comes before any doubling
+of σ of the next iteration. They are not called at the initial point or on an
+iteration that already satisfies a stopping criterion: PDFPM's Step 3 exit, or
+CondG/ProxGrad's `abs_theta < opt_tol`, so with `opt_tol=0` these two visit every
+accepted iterate. Read the initial and returned points from the result. During execution, `result.status` is `:running`; `total_time` is
 filled on return. A callback should treat solver arrays as read-only and copy
 any values it needs to retain.
 

@@ -9,17 +9,17 @@ Solve the proximal subproblem at point `x`.
 
 This function handles two cases:
 
-**Special Case (all h ≈ 0):**
+**Special Case (`b_j = 0` for all j, i.e. δ = 0, where h = 0 exactly):**
     min τ + (σ/2)||u - x||^2
     s.t.
     <∇f_j(x), u - x> ≤ τ,   (∀ j)
     lb ≤ u ≤ ub
 
-**General Case (some h_j ≉ 0):**
+**General Case (some `b_j ≠ 0`):**
     min τ + (σ/2)||u - x||^2
     s.t.
-    <∇f_j(x), u - x> + (<b_j, w_j> - h_j) ≤ τ,   if h_j ≉ 0
-    <∇f_j(x), u - x>                      ≤ τ,   if h_j ≈ 0
+    <∇f_j(x), u - x> + (<b_j, w_j> - h_j) ≤ τ,   if b_j ≠ 0
+    <∇f_j(x), u - x>                      ≤ τ,   if b_j = 0
     A_j' w_j = u
     lb ≤ u ≤ ub,  w_j ≥ 0
 
@@ -102,10 +102,8 @@ function subproblem_proxgrad(x::AbstractVector{T}, Jf::AbstractMatrix{T}, h::Abs
     # objective: τ + (σ/2)‖d‖²
     @objective(model, Min, tau + 0.5*sigma*sum(d[i]^2 for i in Iu))
 
-    # -- branch h ≈ 0 (all components) --
-    all_h_zero = all(j -> isapprox(h[j], zero(T); atol = max(tol, T(1e-14))), 1:m)
-
-    if all_h_zero
+    # -- h_j is omitted only where it vanishes identically: b_j = 0 (δ = 0) --
+    if all(j -> all(iszero, b[j]), 1:m)
         # ⟨∇f_j(x), d⟩ ≤ τ
         for j in 1:m
             grad_j = view(Jf, j, axes(Jf,2))
@@ -124,9 +122,9 @@ function subproblem_proxgrad(x::AbstractVector{T}, Jf::AbstractMatrix{T}, h::Abs
                 @constraint(model, sum(Aj[r, i]*wj[r] for r in rset) == u[i])
             end
 
-            # ⟨∇f_j(x), d⟩ + (⟨b_j, w_j⟩ - h_j) ≤ τ  (only if h_j ≉ 0)
+            # ⟨∇f_j(x), d⟩ + (⟨b_j, w_j⟩ - h_j) ≤ τ  (only if b_j ≠ 0)
             grad_j = view(Jf, j, axes(Jf,2))
-            if !isapprox(h[j], zero(T); atol = max(tol, T(1e-14)))
+            if !all(iszero, b[j])
                 @constraint(model, sum(grad_j[i]*d[i] for i in Iu) + (dot(b[j], wj) - h[j]) <= tau)
             else
                 @constraint(model, sum(grad_j[i]*d[i] for i in Iu) <= tau)

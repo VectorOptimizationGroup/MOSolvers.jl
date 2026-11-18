@@ -54,5 +54,5 @@ module MOSolvers
     export BackTracking, InitialStatic
 
     # Export support-function utilities
-    export SubProblemParams, evalh!, clear_evalh_cache!, set_evalh_highs_limits!
+    export SubProblemParams, robust_subproblem_params, h_matrix_diagnostics, evalh!, clear_evalh_cache!, set_evalh_highs_limits!
 end

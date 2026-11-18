@@ -13,10 +13,13 @@ The method solves a direction subproblem with HiGHS and searches along
 Step selection uses `BackTracking` from
 [MultiObjectiveLineSearches.jl](https://github.com/VectorOptimizationGroup/MultiObjectiveLineSearches.jl).
 
-The default `stop_criteria=:condg` stops when `abs_theta <= opt_tol`.
-`:NormProgress` requires both that inequality and `norm_progress <= ftol`
-after an iteration. The initial point is checked using `abs_theta` alone;
-an exactly zero model measure also stops before another line search.
+The method stops when `abs_theta < opt_tol`, strictly, including at the initial
+point. With `opt_tol=0` this test never holds, and an exactly zero model measure,
+for which no line search exists, still stops before another search.
+`norm_progress` is recorded and never stops the method.
+
+!!! compat "Breaking change"
+    The progress stopping options and their status were removed without deprecation.
 
 See [Configuration](@ref), [Line search](@ref backtracking), and
 [Results and stopping](@ref) for common behavior.

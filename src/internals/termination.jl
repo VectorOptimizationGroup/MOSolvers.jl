@@ -1,6 +1,5 @@
 const _CONVERGENCE_STATUSES = (
     :optimality_tolerance,
-    :optimality_and_progress_tolerance,
     :proximal_step_tolerance,
 )
 
@@ -11,11 +10,11 @@ Return whether a solver's stopping criterion was satisfied. This is derived
 from `result.status`, not stored independently, and does not certify a global
 optimum or equate the model measures of different algorithms.
 
-Convergence statuses are `:optimality_tolerance` (including initial convergence
-and CondG/ProxGrad's explicit zero-model-measure exit),
-`:optimality_and_progress_tolerance`, and PDFPM's `:proximal_step_tolerance`.
-The latter means `sigma * norm(p - x) <= epsilon`; `abs_theta` is `NaN` because
-it was not recomputed at the returned point.
+Convergence statuses are CondG/ProxGrad's `:optimality_tolerance`, meaning
+`|θ| < opt_tol` (including initial convergence and the explicit exit at `θ = 0`),
+and PDFPM's `:proximal_step_tolerance`, meaning
+`sigma * norm(p - x) < epsilon / (3(1 + maxⱼ tr(Bⱼ)))`; there `abs_theta` is `NaN`
+because it was not recomputed at the returned point.
 
 Other final statuses are `:max_iter`, `:max_time`, `:callback`,
 `:max_subproblem_iter`, `:evaluation_failure`, `:subproblem_failure`,

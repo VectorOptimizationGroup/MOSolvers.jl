@@ -10,8 +10,8 @@ result = PDFPM(evalf, A, delta, x0, PDFPM_options();
 
 The method constructs quadratic component models, solves their proximal
 subproblem with Ipopt, and uses an inner loop to test decrease and adjust
-regularization. It updates component curvature matrices with a safeguarded
-BFGS-like formula.
+regularization. By default it updates component curvature matrices with a
+safeguarded BFGS-like formula; `curvature=:zero` keeps them zero.
 
 ## Parameters and stopping
 
@@ -23,40 +23,59 @@ BFGS-like formula.
 | `max_subproblem_iter` | `200` | Maximum candidate attempts per outer iteration |
 | `lambda_factor` | `0.1` | Factor for finite-difference step selection |
 | `lambda_min` | `1e-12` | Minimum finite-difference step |
-| `step_tolerance_rule` | `:epsilon` | Thresholds of the proximal-step and decrease tests |
+| `decrease_rule` | `:proximal_step` | Decrease required in the acceptance test (below) |
+| `curvature` | `:bfgs` | `:bfgs`: identity, then safeguarded BFGS after each accepted step; `:zero`: ``B_j=0`` in every iteration, without update |
 
-With the default `step_tolerance_rule=:epsilon`, a candidate passes the
-decrease test when all objectives satisfy
-
-```math
-F_j(p)\le F_j(x)-\frac{\alpha\varepsilon^2}{2\sigma},
-```
-
-and the proximal criterion is ``\sigma\lVert p-x\rVert_2\le\varepsilon``.
-With `step_tolerance_rule=:trace_scaled` and
-``T=\max_j\operatorname{tr}(B_j)`` for the curvature matrices of the current
-subproblem, the decrease test is
+With ``T=\max_j\operatorname{tr}(B_j)`` for the curvature matrices of the current
+subproblem, a candidate passes the decrease test when all objectives satisfy
 
 ```math
-F_j(p)\le F_j(x)-\frac{\alpha\varepsilon^2}{27\sigma(1+T)^2},
+F_j(p)\le F_j(x)-\frac{\alpha}{2}\sigma\lVert p-x\rVert_2^2
+\quad(\texttt{decrease\_rule=:proximal\_step}),
+\qquad
+F_j(p)\le F_j(x)-\frac{\alpha\varepsilon^2}{27\sigma(1+T)^2}
+\quad(\texttt{:epsilon\_trace}),
 ```
 
 and the proximal criterion is ``\sigma\lVert p-x\rVert_2<\varepsilon/(3(1+T))``.
-A step norm equal to the threshold stops under `:epsilon` and proceeds to the
-decrease test under `:trace_scaled`.
+A step norm equal to the threshold proceeds to the decrease test. With
+`curvature=:zero`, ``T=0`` and the threshold is ``\varepsilon/3``.
 
-The proximal criterion returns `:proximal_step_tolerance`. That return has `abs_theta=NaN`, since the model
-measure was not recomputed at the returned candidate.
-
-The default `stop_criteria=:pdfpm` also stops on `abs_theta <= opt_tol`.
-`:NormProgress` combines that test with `norm_progress <= ftol` after an
-iteration. The initial point is checked using `abs_theta` alone.
+The proximal criterion is the only convergence test and returns
+`:proximal_step_tolerance`. That return has `abs_theta=NaN`, since the model measure was
+not recomputed at the returned candidate. `abs_theta` and `norm_progress` are recorded
+and never stop the method. Other exits are resource limits and failures.
 `max_subproblem_iter` limits this method's inner attempts, not Ipopt iterations.
+
+!!! compat "Breaking change"
+    The model-measure and progress stopping options of PDFPM and the choice of
+    thresholds were removed without deprecation; the thresholds above are the only ones.
+
+!!! compat "Breaking change"
+    The default decrease of the acceptance test is now ``(\alpha/2)\sigma\lVert p-x\rVert_2^2``.
+    Runs that relied on the former default change; `decrease_rule=:epsilon_trace`
+    restores it bit by bit.
+
+## Diagnostics of the last step test
+
+At any `store_level`, the result keeps the data of the last step test. They are
+only recorded and do not change the iterates.
+
+| Field | Value |
+| --- | --- |
+| `sigma`, `max_tr_B` | σ and ``T`` of the test |
+| `step_measure` | ``\sigma\lVert p-x\rVert_2`` |
+| `step_threshold` | ``\varepsilon/(3(1+T))`` |
+| `required_decrease` | The decrease of `decrease_rule` in the test |
+| `actual_decrease` | ``\min_j[F_j(x)-F_j(p)]``; `NaN` if the test stopped at Step 3 |
+| `n_sigma_doublings` | Total doublings of σ in the run |
+
+All are `NaN` (and the count `0`) before the first test and for CondG and ProxGrad.
 
 ## Traces of σ and T
 
 With any `store_level` other than `:none`, entry ``k`` of `sigma_trace` and `max_tr_B_trace` belongs
-to entry ``k`` of the other traces (`x_trace` only from `:medium` on), under both step tolerance rules:
+to entry ``k`` of the other traces (`x_trace` only from `:medium` on):
 
 | Entry | `sigma_trace` | `max_tr_B_trace` |
 | --- | --- | --- |
@@ -67,7 +86,6 @@ to entry ``k`` of the other traces (`x_trace` only from `:medium` on), under bot
 Here ``T=\max_j\operatorname{tr}(B_j)`` is taken before the BFGS update that follows
 an accepted step. No test precedes the initial point, so both values are `NaN`
 there. A run that stops on a rejected candidate or a failure records no new entry.
-Under `:epsilon`, ``T`` does not enter the tests but is recorded for comparison.
 
 ## Derivative inputs
 
