@@ -7,23 +7,25 @@ using Test
     @test MOSolvers.BackTracking === MultiObjectiveLineSearches.BackTracking
     @test MOSolvers.InitialStatic === MultiObjectiveLineSearches.InitialStatic
     spec = BackTracking(c_1=0.1, initial_step=InitialStatic(alpha=0.5))
+    unused!(Fy, y) = error("configuration must not evaluate")
+    configure(spec, T) = MOSolvers.configure_linesearch(spec, unused!, T, 3, 2)
     for T in (Float32, Float64)
-        ls = MOSolvers.configure_linesearch(spec, T)
-        @test ls == configure_linesearch(spec, T)
-        @test ls.c_1 isa T
+        ls = configure(spec, T)
+        @test ls.options == configure_linesearch(spec, unused!, zeros(T, 3), zeros(T, 2)).options
+        @test ls.options.c_1 isa T
+        @test eltype(ls.x_trial) === T && length(ls.x_trial) == 3 && length(ls.F_trial) == 2
     end
     # Steps above one leave the segment [x, p].
-    @test_throws ArgumentError MOSolvers.configure_linesearch(BackTracking(maxstep=1.5), Float64)
-    @test_throws ArgumentError MOSolvers.configure_linesearch(
-        BackTracking(maxstep=2, initial_step=InitialStatic(alpha=1.5)), Float64)
+    @test_throws ArgumentError configure(BackTracking(maxstep=1.5), Float64)
+    @test_throws ArgumentError configure(BackTracking(maxstep=2, initial_step=InitialStatic(alpha=1.5)), Float64)
     short = BackTracking(maxstep=0.5, initial_step=InitialStatic(alpha=0.5))
-    @test MOSolvers.configure_linesearch(short, Float64).maxstep == 0.5
-    @test_throws ArgumentError MOSolvers.configure_linesearch(BackTracking(c_1=2), Float64)
+    @test configure(short, Float64).options.maxstep == 0.5
+    @test_throws ArgumentError configure(BackTracking(c_1=2), Float64)
     # Valid in Float64, but minstep underflows to zero in Float32.
     tiny = BackTracking(minstep=1e-50)
-    @test MOSolvers.configure_linesearch(tiny, Float64).minstep == 1e-50
-    @test_throws ArgumentError MOSolvers.configure_linesearch(tiny, Float32)
-    @test_throws ArgumentError MOSolvers.configure_linesearch(:unsupported, Float64)
+    @test configure(tiny, Float64).options.minstep == 1e-50
+    @test_throws ArgumentError configure(tiny, Float32)
+    @test_throws ArgumentError configure(:unsupported, Float64)
 
     # The solvers reject the line search before evaluating anything.
     calls = Ref(0)
@@ -48,21 +50,22 @@ end
     theta = T(-0.8)
     trials = Vector{T}[]
     F!(Fy, y) = (push!(trials, copy(y)); Fy .= f(y); nothing)
-    ls = MOSolvers.configure_linesearch(BackTracking(), T)
-    x_trial, F_trial, slopes = similar(x), similar(Fx), similar(Fx)
+    ls = MOSolvers.configure_linesearch(BackTracking(), F!, T, length(x), length(Fx))
+    slopes = similar(Fx)
     inputs = map(copy, (x, Fx, JF))
 
     # Check the solver contract for directions with different component slopes.
     for p in (T[0, 1, 0, 0.5], T[-0.5, 0.25, 0, 0])
         d = p .- x
-        new = MOSolvers.perform_linesearch!(ls, F!, x, JF, d, theta, Fx, x_trial, F_trial, slopes)
+        new = MOSolvers.perform_linesearch!(ls, x, JF, d, theta, Fx, slopes)
+        x_trial, F_trial = new.x_trial, new.F_trial
         @test slopes ≈ JF * d
         @test new.nfev == length(trials)
         @test new.success || new.reason in (:minimum_step, :indistinguishable_point, :max_iterations)
         if new.success
             @test x_trial == x .+ new.alpha .* d
             @test F_trial == f(x_trial)
-            @test all(F_trial .<= Fx .- ls.c_1 * new.alpha * abs(theta))
+            @test all(F_trial .<= Fx .- ls.options.c_1 * new.alpha * abs(theta))
         end
         empty!(trials)
         @test (x, Fx, JF) == inputs
@@ -71,11 +74,13 @@ end
     # A failure reported by the evaluator ends the search with its message.
     d = T[0, 1, 0, 0.5] .- x
     failing!(Fy, y) = "evalh! failed: backend error"
-    r = MOSolvers.perform_linesearch!(ls, failing!, x, JF, d, theta, Fx, x_trial, F_trial, slopes)
+    r = MOSolvers.perform_linesearch!(MOSolvers.configure_linesearch(BackTracking(), failing!, T, 4, 3),
+                                      x, JF, d, theta, Fx, slopes)
     @test !r.success && r.reason === :evaluation_failure
     @test r.message == "evalh! failed: backend error" && r.nfev == 1
     quiet!(Fy, y) = (Fy .= f(y); nothing)
-    @test (@inferred MOSolvers.perform_linesearch!(ls, quiet!, x, JF, d, theta, Fx, x_trial, F_trial, slopes)).success
+    quiet = MOSolvers.configure_linesearch(BackTracking(), quiet!, T, 4, 3)
+    @test (@inferred MOSolvers.perform_linesearch!(quiet, x, JF, d, theta, Fx, slopes)).success
 end
 
 @testset "CondG and ProxGrad in Float32 with real backends" begin

@@ -245,8 +245,6 @@ end
 Internal function that implements the CondG algorithm.
 """
 function _CondG_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::Function, m::Int, subproblem::Function, options::CondGParams{T}, callback::Function; linesearch, total_start_time=time()) where {T<:AbstractFloat}
-    ls = configure_linesearch(linesearch, T)
-
     result.status = :running
     result.message = "Optimization in progress"
 
@@ -279,6 +277,8 @@ function _CondG_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::
             return "Error evaluating F: " * string(e)
         end
     end
+    # Prepare the line search once per run, before any evaluation
+    ls = configure_linesearch(linesearch, F!, T, n, m)
 
     if options.verbose > 0
         print_optimizer_header("CondG", options, n, m)
@@ -332,7 +332,6 @@ function _CondG_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::
 
     # Direction and line-search buffers (reused)
     d = similar(x)
-    x_trial = similar(x)
     F_trial = zeros(T, m)
     slopes = zeros(T, m)
 
@@ -355,7 +354,7 @@ function _CondG_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::
         d .= p .- x
 
         # Compute the step size
-        ls_result = perform_linesearch!(ls, F!, x, JF, d, theta, result.Fval, x_trial, F_trial, slopes)
+        ls_result = perform_linesearch!(ls, x, JF, d, theta, result.Fval, slopes)
 
         # An evaluation failure already carries its message
         if !ls_result.success
@@ -365,8 +364,9 @@ function _CondG_optimize!(result::OptimResult, f!::Function, Jf!::Function, h!::
             return _finalize_optimization!(result, options, total_start_time, status, message)
         end
 
-        # Accept the trial point
-        x .= x_trial
+        # Accept the trial point; the result arrays belong to the search
+        x .= ls_result.x_trial
+        F_trial .= ls_result.F_trial
 
         norm_progress = T(norm(x - result.x, Inf) / max(1, norm(result.x, Inf)))
 

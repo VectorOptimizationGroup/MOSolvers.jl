@@ -17,6 +17,9 @@
 
 ### Fixed
 
+- CondG and ProxGrad use the current API of MultiObjectiveLineSearches (`main`, `d191add` or
+  later). Installs resolve its `main` branch, whose API changed under the same version 0.1.0,
+  so the former calls failed with a `MethodError` on the first line search.
 - `PDFPM` without `evalJf`: the finite-difference step is
   `min(max(lambda_factor·ε/(σ√n), lambda_min), ε/(σ√n))`, so `lambda_min` never lifts it above
   the bound `ε/(σ√n)` of Step 1. The central difference costs `2n` evaluations of `f` (it no
