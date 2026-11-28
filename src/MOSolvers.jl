@@ -38,6 +38,7 @@ module MOSolvers
     include("subproblems/subproblem_condg.jl")
     include("subproblems/subproblem_proxgrad.jl")
     include("subproblems/subproblem_pdfpm.jl")
+    include("subproblems/subproblem_steepest_descent.jl")
 
     # Include solvers
     include("solvers/condg.jl")
